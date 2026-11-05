@@ -55,6 +55,11 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card .h .tag { font-size: 10px; opacity: .75; white-space: nowrap; max-width: 70px; overflow: hidden; text-overflow: ellipsis; }
 .card .h button { padding: 0 4px; font-size: 10px; background: rgba(0,0,0,.25); border-color: rgba(255,255,255,.15); color: #fff; }
 .ports { position: relative; padding-bottom: 4px; }
+.socks { padding-top: 3px; border-bottom: 1px solid rgba(255,255,255,.08); padding-bottom: 3px; }
+.srow { font-size: 11px; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow.empty { color: #666; cursor: pointer; font-style: italic; }
+.srow.empty:hover { color: #aaa; }
+.dot.sock { border-radius: 3px; cursor: pointer; }
 .prow { display: flex; justify-content: space-between; font-size: 11px; padding: 0 12px; }
 .prow span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100px; cursor: pointer; }
 .prow span:hover { text-decoration: underline; }
@@ -145,8 +150,8 @@ let pos = {};
 let selected = null;
 let view = { x: 20, y: 20, k: 0.9 };
 let tab = "port", portFilter = null;
-try { pos = JSON.parse(localStorage.getItem("pob-node-pos3") || "{}"); } catch (e) { pos = {}; }
-const savePos = () => { try { localStorage.setItem("pob-node-pos3", JSON.stringify(pos)); } catch (e) {} };
+try { pos = JSON.parse(localStorage.getItem("pob-node-pos4") || "{}"); } catch (e) { pos = {}; }
+const savePos = () => { try { localStorage.setItem("pob-node-pos4", JSON.stringify(pos)); } catch (e) {} };
 
 // ------------------------------------------------------------------ server
 let queue = Promise.resolve();
@@ -320,7 +325,20 @@ const STYLE = {
   lineage: { w: 200, head: 30, row: 20, pill: "linear-gradient(#9c7a24,#5a4512)" },
 };
 const ST = (c) => STYLE[c.kind] || STYLE.notable;
-function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + st.row * Math.max(ins.length, outs.length) + (st.pill ? 4 : 8); }
+// support sockets on skill cards: skill key -> [support/lineage cards in socket order]
+const SOCKETS = 5, SROW = 20;
+let SOCK = {};
+function buildSockets(list) {
+  SOCK = {};
+  list.forEach((c) => { if (c.kind === "skill" && c.gem) SOCK[c.key] = []; });
+  list.forEach((c) => {
+    if (!(c.kind === "support" || c.kind === "lineage") || !c.groupKey) return;
+    const k = c.groupKey();
+    if (k && SOCK[k]) SOCK[k].push(c);
+  });
+}
+const nSock = (c) => (SOCK[c.key] ? Math.max(SOCKETS, SOCK[c.key].length) : 0);
+function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + nSock(c) * SROW + (nSock(c) ? 7 : 0) + st.row * Math.max(ins.length, outs.length) + (st.pill ? 4 : 8); }
 function layout(list) {
   // default positions: situation on top, each skill group = its support pills on the left + skill node(s) on the right,
   // then items, passives and ascendancy columns. Saved (dragged) positions win.
@@ -332,10 +350,14 @@ function layout(list) {
   list.forEach((c) => { if (c.gem) { const g = c.gem.group; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(c); } });
   groups.forEach((cs) => {
     let ly = y, ry = y;
-    cs.forEach((c) => {
-      if (c.kind === "support" || c.kind === "lineage") { def[c.key] = { x: 20, y: ly }; ly += cardH(c) + 12; }
-      else { def[c.key] = { x: 270, y: ry }; ry += cardH(c) + 16; }
+    const placed = new Set();
+    cs.filter((c) => c.kind === "skill").forEach((sk) => {
+      ry = Math.max(ry, ly);
+      def[sk.key] = { x: 300, y: ry };
+      (SOCK[sk.key] || []).forEach((c) => { def[c.key] = { x: 20, y: ly }; ly += cardH(c) + 10; placed.add(c.key); });
+      ry += cardH(sk) + 16;
     });
+    cs.forEach((c) => { if (!def[c.key]) { def[c.key] = { x: 20, y: ly }; ly += cardH(c) + 10; } });
     y = Math.max(ly, ry) + 36;
   });
   const colX = { 2: 580, 3: 880, 4: 1180 }, colY = { 2: 20, 3: 20, 4: 20 };
@@ -370,6 +392,7 @@ function render() {
   if (S) liveGroups.add(S.mainGroup);
   const list = hide ? all.filter((c) => has(c) || c.key === selected || (c.gem && liveGroups.has(c.gem.group))) : all;
   const hiddenN = all.length - list.length;
+  buildSockets(list);
   layout(list);
   const ps = portState(list);
   const world = $("#world");
@@ -392,8 +415,27 @@ function render() {
     const head = st.pill
       ? `<div class="h pillh" style="height:${st.head}px"><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span><span class="tag">${KNAME[c.kind]}</span>${btns}</div>`
       : `<div class="h" style="height:${st.head}px;background:${st.hc}"><span class="glyph">${st.glyph}</span><span class="nm" title="${esc(c.name)} ${esc(sub)}">${esc(c.name)}</span><span class="tag">${esc(sub || KNAME[c.kind])}</span>${btns}</div>`;
-    el.innerHTML = head + `<div class="ports">${rowsHtml}</div>`;
-    const pinY = (i) => st.head + i * st.row + st.row / 2;
+    const ns = nSock(c);
+    let sockHtml = "";
+    if (ns) {
+      const socks = SOCK[c.key];
+      sockHtml = `<div class="socks">` + Array.from({ length: ns }, (_, i) => {
+        const g = socks[i];
+        return `<div class="srow ${g ? "" : "empty"}" style="height:${SROW}px;line-height:${SROW}px" data-sock="${i}">${g ? `<span style="color:${g.kind === "lineage" ? "#e5c25a" : "#b9aaff"}">${esc(g.name)}</span>` : `<span>빈 보조 칸 ${i + 1}</span>`}</div>`;
+      }).join("") + `</div>`;
+      socks.forEach((g, i) => { exec[g.key + "|to"] = { x: p.x, y: p.y + st.head + 3 + i * SROW + SROW / 2 }; });
+      for (let i = 0; i < ns; i++) {
+        const g = socks[i], d = document.createElement("div");
+        const col = g ? (g.kind === "lineage" ? "#e5c25a" : "#b9aaff") : "#777";
+        d.className = "dot sock"; d.style.left = "-6px"; d.style.top = (st.head + 3 + i * SROW + SROW / 2 - 6) + "px";
+        d.style.borderColor = col; d.style.background = g && !g.off ? col : "transparent";
+        d.title = g ? `${g.name} (${KNAME[g.kind]})` : "빈 칸: 누르면 이 스킬에 넣을 보조 젬 목록";
+        d.dataset.sock = i; el.appendChild(d);
+      }
+    }
+    el.innerHTML = head + sockHtml + `<div class="ports">${rowsHtml}</div>` + el.innerHTML;
+    const off0 = st.head + (ns ? ns * SROW + 7 : 0);
+    const pinY = (i) => off0 + i * st.row + st.row / 2;
     ins.forEach((pn, i) => {
       const d = document.createElement("div");
       const missing = !ps.prod[pn];
@@ -412,12 +454,14 @@ function render() {
     });
     // socket link pins: support pill -> skill node (white exec-style)
     if (st.pill) exec[c.key + "|out"] = { x: p.x + st.w, y: p.y + st.head / 2 };
-    if (c.kind === "skill") exec[c.key + "|in"] = { x: p.x, y: p.y + st.head / 2 };
     el.addEventListener("mousedown", (ev) => dragCard(ev, c, el));
     el.addEventListener("click", (ev) => {
       const a = ev.target.dataset.a;
       if (a === "toggle") return toggleCard(c);
       if (a === "remove") return removeCard(c);
+      if (ev.target.closest(".srow.empty") || (ev.target.dataset.sock != null && !SOCK[c.key][+ev.target.dataset.sock])) {
+        gemTarget = { group: c.gem.group, name: c.name }; setTab("gem"); return;
+      }
       const port = ev.target.dataset.port;
       if (port && c.virtual) return togglePort(port);
       if (port) { portFilter = { port, dir: ev.target.dataset.dir }; setTab("port"); return; }
@@ -431,8 +475,8 @@ function render() {
   // socket links first (under the effect wires)
   list.forEach((a) => {
     if (!(a.kind === "support" || a.kind === "lineage") || !a.groupKey) return;
-    const k = a.groupKey(), s = exec[a.key + "|out"], t = k && exec[k + "|in"];
-    if (s && t) paths += wire(s, t, "#e8e8e8", { on: !a.off, w: 2.5, title: `${a.name} → ${list.find((x) => x.key === k)?.name || ""} (보조)` });
+    const k = a.groupKey(), s = exec[a.key + "|out"], t = exec[a.key + "|to"];
+    if (s && t) paths += wire(s, t, a.kind === "lineage" ? "#e5c25a" : "#b9aaff", { on: !a.off, w: 2.5, title: `${a.name} → ${list.find((x) => x.key === k)?.name || ""} (${KNAME[a.kind]})` });
   });
   list.forEach((a) => {
     if (a.off) return;
@@ -630,7 +674,7 @@ let palItems = [];
 function candOf(it) {
   if (it.nodeId) return { addNodes: [it.nodeId] };
   if (it.unique) return { unique: it.unique, slot: it.slot };
-  if (it.gemName) return { gem: it.gemName };
+  if (it.gemName) return { gem: it.gemName, group: gemTarget ? gemTarget.group : undefined };
   return null;
 }
 function paletteHtml(items, header) {
@@ -661,14 +705,14 @@ function bindAdd() {
     let ops = {};
     if (it.nodeId) ops = { addNodes: [it.nodeId] };
     else if (it.unique) ops = { equip: [{ slot: it.slot, unique: it.unique }] };
-    else if (it.gemName) ops = { addGem: { name: it.gemName } };
+    else if (it.gemName) ops = { addGem: { name: it.gemName, group: gemTarget ? gemTarget.group : undefined } };
     else if (it.addGroup) ops = { addGroup: it.addGroup };
     const r = await api({ op: "apply", ...ops });
     if (r.ok) { S = r.state; await syncConfig(); runPreviews(); }
   }));
 }
 function slotForUnique(u) { return u.slot === "Ring 1" ? "Ring 1" : u.slot; }
-let uniqCache = null, gemCache = null;
+let uniqCache = null, gemCache = null, gemTarget = null;
 async function renderPalette() {
   const P = $("#palette");
   if (!S) { P.innerHTML = '<div class="small">먼저 빌드를 불러오세요.</div>'; return; }
@@ -719,7 +763,7 @@ async function renderPalette() {
     $("#slot").addEventListener("change", go); $("#q").addEventListener("input", () => { clearTimeout(go.t); go.t = setTimeout(go, 300); });
     go(); return;
   } else if (tab === "gem") {
-    P.innerHTML = `<div class="row"><input id="q" placeholder="보조젬 이름 필터"></div><div class="small" style="margin-bottom:6px">주 스킬 그룹에 넣었을 때 값</div><div id="res"></div>`;
+    P.innerHTML = `<div class="row"><input id="q" placeholder="보조젬 이름 필터"></div><div class="small" style="margin-bottom:6px">${gemTarget ? `넣을 곳: <b>${esc(gemTarget.name)}</b> <a href="#" id="gtReset">(주 스킬로)</a>` : "주 스킬 그룹에 넣었을 때 값. 스킬 카드의 빈 보조 칸을 누르면 그 스킬에 넣습니다."}</div><div id="res"></div>`;
     if (!gemCache) { const r = await api({ op: "gems", support: true }); gemCache = r.gems || []; }
     const go = () => {
       const q = $("#q").value.toLowerCase();
@@ -728,6 +772,7 @@ async function renderPalette() {
       bindAdd(); runPreviews();
     };
     $("#q").addEventListener("input", () => { clearTimeout(go.t); go.t = setTimeout(go, 400); });
+    const gr = $("#gtReset"); if (gr) gr.addEventListener("click", (e) => { e.preventDefault(); gemTarget = null; renderPalette(); });
     go(); return;
   }
   bindAdd(); runPreviews();
