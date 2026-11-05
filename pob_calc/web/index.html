@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PoB 노드 편집기</title>
+<style>
+:root {
+  --bg: #0b0d10; --grid: #2a2c31; --panel: #12151a; --card: #1b1e23; --card-h: #23272e; --line: #2c313a;
+  --text: #e6e8eb; --dim: #8a919c; --accent: #6aa3ff; --ok: #4cc38a; --bad: #ef6b6b; --warn: #e5b94e; --cut: #555b66;
+  --skill: #6aa3ff; --support: #9b8cff; --unique: #e59b4e; --rare: #d8c25a; --passive: #4cc3b5; --asc: #e56ab4;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, "Segoe UI", "Malgun Gothic", sans-serif; }
+#app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+#top { display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+#top textarea { width: 260px; height: 32px; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
+button, select, input { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px; font: inherit; }
+button:hover { background: var(--card-h); cursor: pointer; }
+button.primary { background: #24406b; border-color: #335a95; }
+#stats { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; min-width: 86px; }
+.stat .k { color: var(--dim); font-size: 11px; }
+.stat .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .d { font-size: 11px; font-variant-numeric: tabular-nums; }
+.up { color: var(--ok); } .down { color: var(--bad); }
+#main { display: grid; grid-template-columns: 300px 1fr 300px; min-height: 0; }
+.side { background: var(--panel); border-right: 1px solid var(--line); overflow: auto; padding: 8px; min-height: 0; }
+#right { border-right: 0; border-left: 1px solid var(--line); }
+.tabs { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+.tabs button.on { background: #24406b; border-color: #335a95; }
+.row { display: flex; gap: 4px; margin-bottom: 6px; }
+.row > * { flex: 1; min-width: 0; }
+.item { border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 6px; margin-bottom: 6px; }
+.item .t { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
+.item .n { font-weight: 600; }
+.item .s { color: var(--dim); font-size: 11px; white-space: pre-line; margin-top: 2px; }
+.chip { font-size: 11px; padding: 0 5px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.kind { font-size: 10px; padding: 0 5px; border-radius: 3px; color: #000; font-weight: 600; }
+#canvas { position: relative; overflow: hidden; cursor: grab; min-height: 0;
+  background-color: #1e1f22;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px; }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#wires { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+#wires path { fill: none; stroke-width: 2; pointer-events: stroke; cursor: pointer; }
+.card { position: absolute; background: #24272d; border: 1px solid #0e0f12; border-radius: 6px; user-select: none; box-shadow: 0 4px 14px rgba(0,0,0,.55); }
+.card.pill { border-radius: 16px; }
+.card.off { opacity: .4; }
+.card.sel { outline: 3px solid #ff5a3d; outline-offset: 1px; }
+.card .h { display: flex; align-items: center; gap: 6px; padding: 0 8px; cursor: move; border-radius: 6px 6px 0 0; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.6); }
+.card .h.pillh { border-radius: 16px; padding: 0 12px; }
+.card .h .glyph { font-weight: 700; opacity: .9; }
+.card .h .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.card .h .tag { font-size: 10px; opacity: .75; white-space: nowrap; max-width: 70px; overflow: hidden; text-overflow: ellipsis; }
+.card .h button { padding: 0 4px; font-size: 10px; background: rgba(0,0,0,.25); border-color: rgba(255,255,255,.15); color: #fff; }
+.ports { position: relative; padding-bottom: 4px; }
+.prow { display: flex; justify-content: space-between; font-size: 11px; padding: 0 12px; }
+.prow span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100px; cursor: pointer; }
+.prow span:hover { text-decoration: underline; }
+.dot { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 2px solid; cursor: crosshair; box-sizing: border-box; }
+.small { color: var(--dim); font-size: 11px; }
+h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+.portrow { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.portrow .pn { flex: 1; }
+.sw { width: 34px; height: 18px; border-radius: 9px; background: var(--cut); position: relative; cursor: pointer; border: 0; padding: 0; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .12s; }
+.sw.on { background: var(--ok); } .sw.on::after { left: 18px; }
+#busy { position: fixed; right: 12px; bottom: 10px; background: var(--card); border: 1px solid var(--line); padding: 4px 10px; border-radius: 6px; display: none; }
+#msg { position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%); background: #3a1e1e; border: 1px solid #6b2c2c; padding: 6px 12px; border-radius: 6px; display: none; max-width: 70vw; }
+#updBtn.has { background: #2e7d32; border-color: #4caf50; color: #fff; animation: updPulse 1.6s ease-in-out infinite; }
+@keyframes updPulse { 50% { box-shadow: 0 0 10px #4caf50; } }
+#export { width: 100%; height: 60px; font-size: 10px; background: var(--bg); color: var(--text); border: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <strong>PoB 노드 편집기</strong>
+    <select id="examples"><option value="">예시 빌드…</option></select>
+    <select id="mainSkill" title="주 스킬 (PoB의 주 스킬 선택과 같음)"></select>
+    <textarea id="code" placeholder="PoB 빌드 코드 붙여넣기"></textarea>
+    <button class="primary" id="load">불러오기</button>
+    <label class="small"><input type="checkbox" id="showCommon" checked> 상황 조건도 표시</label>
+    <label class="small"><input type="checkbox" id="hideBare" checked> 연결 없는 카드 숨기기</label><span class="small" id="hiddenInfo"></span>
+    <button id="updBtn" title="새 버전이 있으면 받아서 바로 적용합니다">업데이트</button>
+    <div id="stats"></div>
+  </div>
+  <div id="main">
+    <div class="side" id="left">
+      <div class="tabs" id="tabs">
+        <button data-t="port" class="on">연결</button><button data-t="passive">패시브</button><button data-t="unique">고유템</button><button data-t="gem">보조젬</button>
+      </div>
+      <div id="palette"></div>
+    </div>
+    <div id="canvas"><div id="world"><svg id="wires"></svg></div></div>
+    <div class="side" id="right">
+      <h3>연결 상태</h3>
+      <div class="small">선 = PoB 설정. 생산자가 있으면 켜지고, 끄면 그 조건이 없는 상태로 계산합니다.</div>
+      <div id="portList"></div>
+      <h3>순환 고리</h3>
+      <div id="cycles" class="small"></div>
+      <h3>선택한 노드</h3>
+      <div id="detail" class="small">노드를 누르면 내용이 보입니다.</div>
+      <h3>내보내기</h3>
+      <button id="exportBtn">PoB 코드 만들기</button>
+      <textarea id="export" readonly></textarea>
+    </div>
+  </div>
+</div>
+<div id="busy">계산 중…</div>
+<div id="msg"></div>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const W = 240, ROW = 18, HEAD = 34;
+let G = { ports: {}, entities: {} };
+let KO = { names: {}, nodes: {}, uniq: {}, tmpl: {}, ports: {} };
+const NUMRX = /\(?-?\d+(?:\.\d+)?(?:[—\-–]\d+(?:\.\d+)?)?\)?/g;
+function T(en) {
+  if (!en) return "";
+  if (KO.names[en]) return KO.names[en];
+  const m = /^(Jewel|Charm|Flask) ?(\d*)$/.exec(en);
+  if (m) return ({ Jewel: "주얼", Charm: "호신부", Flask: "플라스크" })[m[1]] + (m[2] ? " " + m[2] : "");
+  return en;
+}                  // name -> Korean client name
+function PN(p) { return KO.ports[p] || (G.ports[p] && G.ports[p].kr) || p; } // port -> Korean term
+function NN(id, en) { const n = KO.nodes[String(id)]; return n ? n.n : T(en); }
+function TL(line) {                                                            // one mod line -> Korean
+  if (!line) return "";
+  const nums = line.match(NUMRX) || [];
+  const t = KO.tmpl[line.replace(NUMRX, "#").trim().toLowerCase()];
+  return t ? t.replace(/\{(\d+)\}/g, (m, i) => nums[+i] ?? "#") : line;
+}
+function EN(id) { const e = G.entities[id]; if (!e) return ""; if (id.startsWith("node:")) return NN(id.slice(5), e.n); return T(e.n); }
+let S = null;                 // server state
+let base0 = null, prev = null; // stats at load, before last change
+let override = {};            // port -> true/false set by the user (wire or switch)
+let ORIG = {};                // the build's own PoB config at load
+let prodAtLoad = new Set();   // ports that already had a producer at load
+let lastSent = {};            // config values sent to PoB so far
+let ghosts = [];              // switched-off cards kept on the canvas so they can be switched back on
+let pos = {};
+let selected = null;
+let view = { x: 20, y: 20, k: 0.9 };
+let tab = "port", portFilter = null;
+try { pos = JSON.parse(localStorage.getItem("pob-node-pos3") || "{}"); } catch (e) { pos = {}; }
+const savePos = () => { try { localStorage.setItem("pob-node-pos3", JSON.stringify(pos)); } catch (e) {} };
+
+// ------------------------------------------------------------------ server
+let queue = Promise.resolve();
+function api(req) {
+  const run = async () => {
+    $("#busy").style.display = "block";
+    try {
+      const r = await fetch("/api", { method: "POST", body: JSON.stringify(req) });
+      const j = await r.json();
+      if (!j.ok) showMsg(j.error || "오류");
+      else if (j.warnings && j.warnings.length) showMsg(j.warnings.join(" / "));
+      return j;
+    } finally { $("#busy").style.display = "none"; }
+  };
+  queue = queue.then(run, run);
+  return queue;
+}
+function showMsg(t) { const m = $("#msg"); m.textContent = String(t).slice(0, 400); m.style.display = "block"; clearTimeout(showMsg.t); showMsg.t = setTimeout(() => m.style.display = "none", 6000); }
+
+// ------------------------------------------------------------------ stats
+const fmt = (v) => v == null ? "-" : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + "M" : Math.abs(v) >= 1e4 ? (v / 1e3).toFixed(1) + "k" : Math.round(v).toLocaleString();
+function dps(s) { return s ? (s.CombinedDPS || s.MinionDPS || s.FullDPS || 0) : 0; }
+function renderStats() {
+  if (!S) return;
+  const s = S.stats, defs = [
+    ["주 스킬 초당 피해", dps], ["전체 초당 피해(Full)", (x) => x.FullDPS], ["유효 생명력(EHP)", (x) => x.TotalEHP], ["생명력", (x) => x.Life], ["에너지 보호막", (x) => x.EnergyShield],
+    ["화염/냉기/번개 저항", (x) => x.FireResist, (x) => `${fmt(x.FireResist)}/${fmt(x.ColdResist)}/${fmt(x.LightningResist)}`],
+    ["카오스 저항", (x) => x.ChaosResist], ["남은 정신력", (x) => x.SpiritUnreserved]];
+  $("#stats").innerHTML = defs.map(([k, f, show]) => {
+    const v = f(s), p = prev ? f(prev) : null, b = base0 ? f(base0) : null;
+    const pct = (a, c) => (c && a != null) ? ((a - c) / Math.abs(c) * 100) : null;
+    const d1 = pct(v, p), d0 = pct(v, b);
+    const cls = (d) => d > 0.05 ? "up" : d < -0.05 ? "down" : "";
+    const sgn = (d) => (d > 0 ? "+" : "") + d.toFixed(1) + "%";
+    return `<div class="stat"><div class="k">${k}</div><div class="v">${show ? show(s) : fmt(v)}</div>
+      <div class="d"><span class="${cls(d1)}" title="방금 바꾼 것">${d1 != null && Math.abs(d1) > 0.05 ? sgn(d1) : ""}</span>
+      <span class="${cls(d0)} small" title="불러온 빌드 대비">${d0 != null && Math.abs(d0) > 0.05 ? " 원본 " + sgn(d0) : ""}</span></div></div>`;
+  }).join("");
+}
+
+// ------------------------------------------------------------------ cards from state
+const KCOL = { situation: "--warn", skill: "--skill", support: "--support", lineage: "--support", unique: "--unique", rare: "--rare", notable: "--passive", keystone: "--passive", ascendancy: "--asc" };
+const KNAME = { situation: "상황", skill: "스킬", support: "보조", lineage: "혈통", unique: "고유", rare: "희귀", notable: "주요", keystone: "핵심", ascendancy: "전직" };
+// ports of an item from its mod lines (rare items, or uniques missing from the graph)
+function modEntity(mods) {
+  const e = { in: [], out: [], ev: {} };
+  (mods || []).forEach((l) => {
+    const m = (G.modPorts || {})[String(l).replace(/\{[^}]*\}/g, "").replace(NUMRX, "#").trim().toLowerCase()];
+    if (!m) return;
+    m.in.forEach((p) => { if (!e.in.includes(p)) { e.in.push(p); e.ev["in:" + p] = l; } });
+    m.out.forEach((p) => { if (!e.out.includes(p)) { e.out.push(p); e.ev["out:" + p] = l; } });
+  });
+  return e.in.length || e.out.length ? e : null;
+}
+function short(n) { return String(n || "").split(",")[0]; }
+function cards() {
+  const out = [];
+  if (!S) return out;
+  S.skills.forEach((g, gi) => {
+    if (g.enabled === false) return;
+    let active = null;
+    g.gems.forEach((gem, j) => {
+      const ent = G.entities["gem:" + gem.name];
+      const kind = (G.gemKind && G.gemKind[gem.name]) || (ent ? ent.k : "skill");
+      const key = `gem:${gi + 1}:${j + 1}:${gem.name}`;
+      if (kind === "skill" && !active) active = key;
+      out.push({ key, kind, name: T(gem.name), en: gem.name, ent, off: gem.enabled === false, gem: { group: gi + 1, idx: j + 1 }, col: 1, groupKey: () => active, label: g.label });
+    });
+  });
+  S.items.forEach((it) => {
+    if (it.slot.startsWith("Weapon 2 Swap") || it.slot.startsWith("Weapon 1 Swap")) return;
+    const uniq = it.rarity === "UNIQUE";
+    const nm = uniq ? short(it.name) : it.base;
+    out.push({ key: "item:" + it.slot, kind: uniq ? "unique" : "rare", name: T(nm), en: nm, ent: (uniq && G.entities["unique:" + nm]) || modEntity(it.mods), slot: it.slot, mods: it.mods, col: 2 });
+  });
+  let normals = 0;
+  S.nodes.forEach((n) => {
+    const isAsc = !!n.asc;
+    if (n.type === "Notable" || n.type === "Keystone" || (isAsc && n.type !== "Normal")) {
+      out.push({ key: "node:" + n.id, kind: isAsc ? "ascendancy" : n.type === "Keystone" ? "keystone" : "notable", name: NN(n.id, n.name), ent: G.entities["node:" + n.id], node: n, col: isAsc ? 4 : 3 });
+    } else normals++;
+  });
+  ghosts.forEach((g) => out.push({ ...g, off: true, ghost: true }));
+  // virtual source for situational conditions (killed recently, been hit, moving...): switched on/off by hand
+  const sit = new Set();
+  out.forEach((c) => { if (c.ent && !c.off) c.ent.in.forEach((p) => { if (G.ports[p] && G.ports[p].common) sit.add(p); }); });
+  if (sit.size) out.unshift({ key: "situation", kind: "situation", name: "전투 상황", ent: { in: [], out: [...sit], ev: {} }, col: 0, virtual: true });
+  cards.normals = normals;
+  return out;
+}
+function portsOf(c) {
+  const e = c.ent; if (!e) return { ins: [], outs: [] };
+  const show = $("#showCommon").checked;
+  const ok = (p) => G.ports[p] && (show || !G.ports[p].common);
+  // a situational output nobody in the build uses is noise: hide it
+  return { ins: e.in.filter(ok), outs: e.out.filter((p) => ok(p) && (!G.ports[p].common || !CONSUMED || CONSUMED.has(p))) };
+}
+
+// ------------------------------------------------------------------ connection state
+function portState(list) {
+  const prod = {}, cons = {};
+  list.forEach((c) => {
+    if (c.off) return;
+    const e = c.ent; if (!e) return;
+    e.out.forEach((p) => (prod[p] = prod[p] || []).push(c));
+    e.in.forEach((p) => (cons[p] = cons[p] || []).push(c));
+  });
+  const active = {};
+  Object.keys(G.ports).forEach((p) => {
+    const d = G.ports[p];
+    if (!d.config || !Object.keys(d.config).length) { active[p] = !!prod[p]; return; }
+    // default = the build's own PoB setting, so a freshly loaded build calculates exactly like PoB;
+    // a producer added in the editor switches the port on; the user can override either way
+    if (p in override) active[p] = override[p];
+    else active[p] = origOn(p) || (!!prod[p] && !prodAtLoad.has(p));
+  });
+  return { prod, cons, active };
+}
+const truthy = (v) => v !== undefined && v !== null && v !== false && v !== 0 && v !== "";
+function origOn(p) { const d = G.ports[p]; return !!d && Object.keys(d.config || {}).some((k) => truthy(ORIG[k])); }
+function configFor(ps) {
+  // only send what differs from the build's own setting (or undoes an earlier change)
+  const want = {};
+  Object.entries(G.ports).forEach(([p, d]) => {
+    Object.entries(d.config || {}).forEach(([k, v]) => {
+      const on = ps.active[p];
+      let val;
+      if (on === origOn(p)) val = ORIG[k];                      // untouched: PoB's own value
+      else if (on) val = truthy(ORIG[k]) ? ORIG[k] : v;          // switched on
+      else val = typeof v === "number" ? 0 : false;              // switched off
+      if (k in want && truthy(want[k])) return;                  // a var shared by two ports stays on if either wants it
+      want[k] = val;
+    });
+  });
+  const cfg = {};
+  Object.entries(want).forEach(([k, v]) => {
+    const cur = k in lastSent ? lastSent[k] : ORIG[k];
+    if (v === undefined) { if (truthy(cur)) cfg[k] = typeof cur === "number" ? 0 : false; }
+    else if (v !== cur) cfg[k] = v;
+  });
+  Object.entries(cfg).forEach(([k, v]) => (lastSent[k] = v));
+  return cfg;
+}
+
+// ------------------------------------------------------------------ render canvas
+// port colours by family (pins and wires share them, like blueprint pin types)
+const PCOL = {
+  "enemy:Ignited": "#ff7a3d", "enemy:Burning": "#ff7a3d", "enemy:Shocked": "#f2d33d", "enemy:Electrocuted": "#c9b8ff",
+  "enemy:Frozen": "#5ccfff", "enemy:Chilled": "#8fdcff", "enemy:Bleeding": "#e0484f", "enemy:Poisoned": "#7bd34a", "enemy:Withered": "#9a7bd3",
+  PowerCharge: "#4f8cff", FrenzyCharge: "#5fd36b", EnduranceCharge: "#ff9a3d", Rage: "#ff4f4f",
+  Trigger: "#ffffff", Energy: "#ffffff", LowLife: "#d94b4b", FullLife: "#e88", LowMana: "#6a8cff", FullEnergyShield: "#9fc3ff",
+  Minion: "#c28cff", Totem: "#c28cff", Corpse: "#b39ddb", CompanionInPresence: "#c28cff", MinionDeath: "#c28cff",
+};
+function PC(p) {
+  if (PCOL[p]) return PCOL[p];
+  const d = G.ports[p];
+  if (d && d.common) return "#9aa3ad";
+  if (p.startsWith("enemy:")) return "#e06bd8";
+  if (["Onslaught", "ArcaneSurge", "UnholyMight", "Tailwind", "Elusive", "Empowered", "Fortify", "Phasing"].includes(p)) return "#3fd0a8";
+  return "#e5b94e";
+}
+const STYLE = {
+  situation: { w: 210, head: 30, row: 22, hc: "linear-gradient(#a33434,#5e1b1b)", glyph: "◆" },
+  skill: { w: 230, head: 30, row: 22, hc: "linear-gradient(#3b6fc0,#1d3b6a)", glyph: "ƒ" },
+  unique: { w: 230, head: 30, row: 22, hc: "linear-gradient(#c0732a,#6b3a10)", glyph: "★" },
+  rare: { w: 230, head: 30, row: 22, hc: "linear-gradient(#a8932a,#5f5414)", glyph: "◇" },
+  notable: { w: 230, head: 30, row: 22, hc: "linear-gradient(#22897c,#124a44)", glyph: "◉" },
+  keystone: { w: 230, head: 30, row: 22, hc: "linear-gradient(#3a7f9c,#173d4d)", glyph: "⬢" },
+  ascendancy: { w: 230, head: 30, row: 22, hc: "linear-gradient(#ad3a8a,#5a1a46)", glyph: "♛" },
+  support: { w: 200, head: 30, row: 20, pill: "linear-gradient(#5a47a8,#33286a)" },
+  lineage: { w: 200, head: 30, row: 20, pill: "linear-gradient(#9c7a24,#5a4512)" },
+};
+const ST = (c) => STYLE[c.kind] || STYLE.notable;
+function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + st.row * Math.max(ins.length, outs.length) + (st.pill ? 4 : 8); }
+function layout(list) {
+  // default positions: situation on top, each skill group = its support pills on the left + skill node(s) on the right,
+  // then items, passives and ascendancy columns. Saved (dragged) positions win.
+  const def = {};
+  let y = 20;
+  const sit = list.find((c) => c.kind === "situation");
+  if (sit) { def[sit.key] = { x: 20, y }; y += cardH(sit) + 40; }
+  const groups = new Map();
+  list.forEach((c) => { if (c.gem) { const g = c.gem.group; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(c); } });
+  groups.forEach((cs) => {
+    let ly = y, ry = y;
+    cs.forEach((c) => {
+      if (c.kind === "support" || c.kind === "lineage") { def[c.key] = { x: 20, y: ly }; ly += cardH(c) + 12; }
+      else { def[c.key] = { x: 270, y: ry }; ry += cardH(c) + 16; }
+    });
+    y = Math.max(ly, ry) + 36;
+  });
+  const colX = { 2: 580, 3: 880, 4: 1180 }, colY = { 2: 20, 3: 20, 4: 20 };
+  list.forEach((c) => { if (def[c.key] || !colX[c.col]) return; def[c.key] = { x: colX[c.col], y: colY[c.col] }; colY[c.col] += cardH(c) + 18; });
+  list.forEach((c) => { if (!pos[c.key]) pos[c.key] = def[c.key] || { x: 20, y }; });
+}
+// cubic bezier point + tangent at t, for the flow arrow in the middle of each wire
+function bez(s, c1, c2, t, u) {
+  const m = 1 - u, x = m * m * m * s.x + 3 * m * m * u * c1.x + 3 * m * u * u * c2.x + u * u * u * t.x;
+  const y = m * m * m * s.y + 3 * m * m * u * c1.y + 3 * m * u * u * c2.y + u * u * u * t.y;
+  const dx = 3 * m * m * (c1.x - s.x) + 6 * m * u * (c2.x - c1.x) + 3 * u * u * (t.x - c2.x);
+  const dy = 3 * m * m * (c1.y - s.y) + 6 * m * u * (c2.y - c1.y) + 3 * u * u * (t.y - c2.y);
+  return { x, y, a: Math.atan2(dy, dx) };
+}
+function wire(s, t, color, opts) {
+  const dx = Math.max(50, Math.abs(t.x - s.x) / 2);
+  const c1 = { x: s.x + dx, y: s.y }, c2 = { x: t.x - dx, y: t.y };
+  const m = bez(s, c1, c2, t, 0.5), A = 7;
+  const tri = [[A, 0], [-A, -A * 0.75], [-A, A * 0.75]].map(([px, py]) => `${m.x + px * Math.cos(m.a) - py * Math.sin(m.a)},${m.y + px * Math.sin(m.a) + py * Math.cos(m.a)}`).join(" ");
+  const op = opts.on ? 1 : 0.35;
+  return `<g opacity="${op}"><path d="M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}" stroke="${color}" stroke-width="${opts.w || 2}" ${opts.on ? "" : 'stroke-dasharray="6 5"'} ${opts.glow ? 'filter="url(#glow)"' : ""} ${opts.port ? `data-port="${opts.port}"` : 'style="pointer-events:none"'}>${opts.title ? `<title>${esc(opts.title)}</title>` : ""}</path>
+    <polygon points="${tri}" fill="${color}" style="pointer-events:none"/></g>`;
+}
+let CONSUMED = null;
+function render() {
+  CONSUMED = null;
+  const all = cards();
+  CONSUMED = new Set(all.filter((c) => c.ent && !c.off).flatMap((c) => c.ent.in));
+  const hide = $("#hideBare").checked;
+  const has = (c) => { const p = portsOf(c); return p.ins.length || p.outs.length; };
+  const liveGroups = new Set(all.filter((c) => c.gem && has(c)).map((c) => c.gem.group));
+  if (S) liveGroups.add(S.mainGroup);
+  const list = hide ? all.filter((c) => has(c) || c.key === selected || (c.gem && liveGroups.has(c.gem.group))) : all;
+  const hiddenN = all.length - list.length;
+  layout(list);
+  const ps = portState(list);
+  const world = $("#world");
+  world.querySelectorAll(".card").forEach((n) => n.remove());
+  const dots = {}, exec = {};
+  list.forEach((c) => {
+    const p = pos[c.key], { ins, outs } = portsOf(c), st = ST(c);
+    const el = document.createElement("div");
+    el.className = "card" + (st.pill ? " pill" : "") + (c.off ? " off" : "") + (selected === c.key ? " sel" : "");
+    el.style.left = p.x + "px"; el.style.top = p.y + "px"; el.style.width = st.w + "px";
+    if (st.pill) el.style.background = st.pill;
+    const rows = Math.max(ins.length, outs.length);
+    let rowsHtml = "";
+    for (let i = 0; i < rows; i++) {
+      const a = ins[i], b = outs[i];
+      rowsHtml += `<div class="prow" style="height:${st.row}px;line-height:${st.row}px"><span data-port="${a || ""}" data-dir="in" style="color:${a ? PC(a) : ""}" title="${esc(a ? TL(c.ent.ev["in:" + a] || "") : "")}">${a ? esc(PN(a)) : ""}</span><span data-port="${b || ""}" data-dir="out" style="color:${b ? PC(b) : ""}" title="${esc(b ? TL(c.ent.ev["out:" + b] || "") : "")}">${b ? esc(PN(b)) : ""}</span></div>`;
+    }
+    const sub = c.kind === "rare" || c.kind === "unique" ? T(c.slot) : "";
+    const btns = c.virtual ? "" : `<button data-a="toggle" title="${c.off ? "켜기" : "끄기"}">${c.off ? "○" : "●"}</button><button data-a="remove" title="빼기">✕</button>`;
+    const head = st.pill
+      ? `<div class="h pillh" style="height:${st.head}px"><span class="nm" title="${esc(c.name)}">${esc(c.name)}</span><span class="tag">${KNAME[c.kind]}</span>${btns}</div>`
+      : `<div class="h" style="height:${st.head}px;background:${st.hc}"><span class="glyph">${st.glyph}</span><span class="nm" title="${esc(c.name)} ${esc(sub)}">${esc(c.name)}</span><span class="tag">${esc(sub || KNAME[c.kind])}</span>${btns}</div>`;
+    el.innerHTML = head + `<div class="ports">${rowsHtml}</div>`;
+    const pinY = (i) => st.head + i * st.row + st.row / 2;
+    ins.forEach((pn, i) => {
+      const d = document.createElement("div");
+      const missing = !ps.prod[pn];
+      d.className = "dot"; d.style.left = "-6px"; d.style.top = (pinY(i) - 6) + "px";
+      d.style.background = missing ? "transparent" : PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] || missing ? 1 : 0.4;
+      d.title = PN(pn) + (missing ? " (만드는 요소 없음)" : ps.active[pn] ? "" : " (꺼짐)");
+      d.dataset.port = pn; d.dataset.dir = "in"; el.appendChild(d);
+      dots[c.key + "|in|" + pn] = { x: p.x, y: p.y + pinY(i) };
+    });
+    outs.forEach((pn, i) => {
+      const d = document.createElement("div");
+      d.className = "dot"; d.style.left = (st.w - 6) + "px"; d.style.top = (pinY(i) - 6) + "px";
+      d.style.background = PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] ? 1 : 0.4; d.title = PN(pn);
+      d.dataset.port = pn; d.dataset.dir = "out"; el.appendChild(d);
+      dots[c.key + "|out|" + pn] = { x: p.x + st.w, y: p.y + pinY(i) };
+    });
+    // socket link pins: support pill -> skill node (white exec-style)
+    if (st.pill) exec[c.key + "|out"] = { x: p.x + st.w, y: p.y + st.head / 2 };
+    if (c.kind === "skill") exec[c.key + "|in"] = { x: p.x, y: p.y + st.head / 2 };
+    el.addEventListener("mousedown", (ev) => dragCard(ev, c, el));
+    el.addEventListener("click", (ev) => {
+      const a = ev.target.dataset.a;
+      if (a === "toggle") return toggleCard(c);
+      if (a === "remove") return removeCard(c);
+      const port = ev.target.dataset.port;
+      if (port && c.virtual) return togglePort(port);
+      if (port) { portFilter = { port, dir: ev.target.dataset.dir }; setTab("port"); return; }
+      selected = c.key; showDetail(c); render();
+    });
+    world.appendChild(el);
+  });
+  const cyc = findCycles(list, ps);
+  const svg = $("#wires");
+  let paths = `<defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+  // socket links first (under the effect wires)
+  list.forEach((a) => {
+    if (!(a.kind === "support" || a.kind === "lineage") || !a.groupKey) return;
+    const k = a.groupKey(), s = exec[a.key + "|out"], t = k && exec[k + "|in"];
+    if (s && t) paths += wire(s, t, "#e8e8e8", { on: !a.off, w: 2.5, title: `${a.name} → ${list.find((x) => x.key === k)?.name || ""} (보조)` });
+  });
+  list.forEach((a) => {
+    if (a.off) return;
+    portsOf(a).outs.forEach((pn) => {
+      list.forEach((b) => {
+        if (b === a || b.off || !portsOf(b).ins.includes(pn)) return;
+        const s = dots[a.key + "|out|" + pn], t = dots[b.key + "|in|" + pn];
+        if (!s || !t) return;
+        const inCycle = cyc.edge.has(a.key + ">" + b.key);
+        paths += wire(s, t, PC(pn), { on: ps.active[pn], w: inCycle ? 4 : 2, glow: inCycle, port: pn,
+          title: `${PN(pn)}: ${a.name} → ${b.name}${inCycle ? " (순환 고리)" : ""} — 누르면 ${ps.active[pn] ? "끊기" : "잇기"}` });
+      });
+    });
+  });
+  svg.innerHTML = paths;
+  svg.querySelectorAll("path[data-port]").forEach((p) => p.addEventListener("click", () => togglePort(p.dataset.port)));
+  applyView();
+  $("#hiddenInfo").textContent = hiddenN ? `(${hiddenN}개 숨김)` : "";
+  renderPortList(ps);
+  renderCycles(cyc, list);
+  renderStats();
+}
+
+// Tarjan SCC over cards: an edge a->b when a outputs a port that b takes as input (both on, port visible)
+function findCycles(list, ps) {
+  const on = list.filter((c) => !c.off && c.ent);
+  const adj = new Map(on.map((c) => [c.key, []]));
+  const ports = new Map();
+  on.forEach((a) => portsOf(a).outs.forEach((pn) => on.forEach((b) => {
+    if (a !== b && portsOf(b).ins.includes(pn)) {
+      adj.get(a.key).push(b.key);
+      const k = a.key + ">" + b.key; (ports.get(k) || ports.set(k, new Set()).get(k)).add(pn);
+    }
+  })));
+  let index = 0; const idx = new Map(), low = new Map(), stack = [], onS = new Set(), comps = [];
+  const strong = (v) => {
+    idx.set(v, index); low.set(v, index); index++; stack.push(v); onS.add(v);
+    for (const w of adj.get(v)) {
+      if (!idx.has(w)) { strong(w); low.set(v, Math.min(low.get(v), low.get(w))); }
+      else if (onS.has(w)) low.set(v, Math.min(low.get(v), idx.get(w)));
+    }
+    if (low.get(v) === idx.get(v)) { const comp = []; let w; do { w = stack.pop(); onS.delete(w); comp.push(w); } while (w !== v); comps.push(comp); }
+  };
+  on.forEach((c) => { if (!idx.has(c.key)) strong(c.key); });
+  const edge = new Set(), groups = [];
+  comps.forEach((comp) => {
+    const set = new Set(comp);
+    if (comp.length < 2) return;
+    const gports = new Set();
+    comp.forEach((a) => adj.get(a).forEach((b) => { if (set.has(b)) { edge.add(a + ">" + b); ports.get(a + ">" + b).forEach((p) => gports.add(p)); } }));
+    groups.push({ members: comp, ports: [...gports] });
+  });
+  return { edge, groups };
+}
+let cycleValues = {};
+function renderCycles(cyc, list) {
+  const byKey = Object.fromEntries(list.map((c) => [c.key, c]));
+  const el = $("#cycles");
+  if (!cyc.groups.length) { el.innerHTML = '<div class="small">지금 빌드에는 고리가 없습니다. 노드를 더해 고리를 만들어 보세요.</div>'; return; }
+  el.innerHTML = cyc.groups.map((g, i) => {
+    const id = g.members.slice().sort().join("|");
+    const v = cycleValues[id];
+    const names = g.members.map((k) => byKey[k]?.name).join(" → ");
+    const pk = g.ports.map(PN).join(", ");
+    const cfgPorts = g.ports.filter((p) => G.ports[p]?.config && Object.keys(G.ports[p].config).length);
+    return `<div class="item"><div class="n" style="color:var(--warn)">고리 ${i + 1}</div><div class="s">${esc(names)}</div><div class="s">연결: ${esc(pk)}</div>
+      <div class="t" style="margin-top:4px"><span class="small">${v ? `끊으면 초당 피해 ${v.dps.toFixed(1)}%, 유효 생명력 ${v.ehp.toFixed(1)}%` : cfgPorts.length ? "" : "PoB 설정이 없는 연결이라 값 측정 불가"}</span>
+      ${cfgPorts.length ? `<button data-cyc="${i}">기여도 측정</button>` : ""}</div></div>`;
+  }).join("");
+  el.querySelectorAll("button[data-cyc]").forEach((b) => b.addEventListener("click", async () => {
+    const g = cyc.groups[+b.dataset.cyc], id = g.members.slice().sort().join("|");
+    const ports = g.ports.filter((p) => G.ports[p]?.config && Object.keys(G.ports[p].config).length && !G.ports[p].common);
+    const s0 = S.stats, saved = { ...override };
+    ports.forEach((p) => (override[p] = false));
+    const r = await api({ op: "apply", config: configFor(portState(cards())) });
+    override = saved;
+    const r2 = await api({ op: "apply", config: configFor(portState(cards())) });
+    if (r.ok && r2.ok) {
+      const pct = (a, c) => c ? (a - c) / Math.abs(c) * 100 : 0;
+      cycleValues[id] = { dps: pct(dps(r.state.stats), dps(s0)), ehp: pct(r.state.stats.TotalEHP, s0.TotalEHP) };
+      S = r2.state;
+    }
+    render();
+  }));
+}
+function applyView() { $("#world").style.transform = `translate(${view.x}px,${view.y}px) scale(${view.k})`; }
+
+// ------------------------------------------------------------------ right panel
+function renderPortList(ps) {
+  const rows = Object.keys(G.ports).filter((p) => ps.prod[p] || ps.cons[p]).sort((a, b) => (ps.cons[b] || []).length - (ps.cons[a] || []).length);
+  $("#portList").innerHTML = rows.map((p) => {
+    const d = G.ports[p], hasCfg = d.config && Object.keys(d.config).length;
+    const pr = (ps.prod[p] || []).map((c) => c.name), co = (ps.cons[p] || []).map((c) => c.name);
+    return `<div class="portrow"><div class="pn"><b>${esc(PN(p))}</b>${d.common ? ' <span class="small">흔함</span>' : ""}<div class="small">만드는 것: ${esc(pr.join(", ") || "없음")}<br>쓰는 것: ${esc(co.join(", ") || "없음")}</div></div>
+      ${hasCfg ? `<button class="sw ${ps.active[p] ? "on" : ""}" data-port="${p}" title="${d.common ? "직접 켜고 끄는 흔한 조건" : "끄면 생산자가 있어도 없는 것으로 계산"}"></button>` : '<span class="small">표시만</span>'}</div>`;
+  }).join("") || '<div class="small">빌드를 불러오세요.</div>';
+  $("#portList").querySelectorAll(".sw").forEach((b) => b.addEventListener("click", () => togglePort(b.dataset.port)));
+}
+function showDetail(c) {
+  const e = c.ent;
+  let h = `<div class="item"><div class="n">${esc(c.name)}</div><div class="small">${KNAME[c.kind] || ""} ${esc(T(c.slot || ""))}</div>`;
+  const kn = c.node && KO.nodes[String(c.node.id)];
+  if (kn && kn.s.length) h += `<div class="s">${esc(kn.s.join("\n"))}</div>`;
+  else if (c.node && c.node.stats) h += `<div class="s">${esc(c.node.stats.map(TL).join("\n"))}</div>`;
+  if (c.mods) h += `<div class="s">${esc(c.mods.map(TL).join("\n"))}</div>`;
+  if (e) Object.entries(e.ev).forEach(([k, v]) => {
+    const [dir, ...rest] = k.split(":"); const p = rest.join(":");
+    if (G.ports[p]) h += `<div class="s"><b>${dir === "in" ? "입력" : "출력"} ${esc(PN(p))}</b>: ${esc(TL(v))}</div>`;
+  });
+  $("#detail").innerHTML = h + "</div>";
+}
+
+// ------------------------------------------------------------------ actions
+async function applyOps(ops) {
+  prev = S ? S.stats : null;
+  const list0 = cards();
+  const r = await api({ op: "apply", ...ops, config: undefined });
+  if (!r.ok) return;
+  S = r.state;
+  await syncConfig(false);
+}
+async function syncConfig(keepPrev) {
+  const cfg = configFor(portState(cards()));
+  if (Object.keys(cfg).length) {
+    const r = await api({ op: "apply", config: cfg });
+    if (r.ok) S = r.state;
+  }
+  render();
+}
+async function toggleCard(c) {
+  if (c.gem && !c.ghost) { prev = S.stats; const r = await api({ op: "apply", toggleGem: { group: c.gem.group, gem: c.gem.idx, enabled: !!c.off } }); if (r.ok) S = r.state; return syncConfig(); }
+  if (c.ghost) { ghosts = ghosts.filter((g) => g.key !== c.key); return addCard(c); }
+  ghosts.push({ ...c, off: true });
+  return removeCard(c, true);
+}
+async function removeCard(c, keepGhost) {
+  if (c.ghost && !keepGhost) { ghosts = ghosts.filter((g) => g.key !== c.key); return render(); }
+  prev = S.stats;
+  let ops = {};
+  if (c.gem) ops = { removeGem: { group: c.gem.group, gem: c.gem.idx } };
+  else if (c.node) ops = { removeNodes: [c.node.id] };
+  else if (c.slot) ops = { unequip: [c.slot] };
+  const r = await api({ op: "apply", ...ops });
+  if (r.ok) S = r.state;
+  return syncConfig();
+}
+async function addCard(c) {
+  prev = S.stats;
+  let ops = {};
+  if (c.node) ops = { addNodes: [c.node.id] };
+  else if (c.kind === "unique") ops = { equip: [{ slot: c.slot, unique: c.name }] };
+  else if (c.gem) ops = { addGem: { group: c.gem.group, name: c.name } };
+  const r = await api({ op: "apply", ...ops });
+  if (r.ok) S = r.state;
+  return syncConfig();
+}
+function togglePort(p) {
+  const d = G.ports[p];
+  if (!d || !d.config || !Object.keys(d.config).length) return showMsg("이 연결은 PoB 설정이 없어 표시만 합니다.");
+  prev = S.stats;
+  const ps = portState(cards());
+  override[p] = !ps.active[p];
+  syncConfig();
+}
+
+// ------------------------------------------------------------------ drag / pan / zoom
+function dragCard(ev, c, el) {
+  if (ev.target.tagName === "BUTTON" || ev.target.classList.contains("dot") || ev.target.dataset.port) return;
+  ev.stopPropagation();
+  const sx = ev.clientX, sy = ev.clientY, p0 = { ...pos[c.key] };
+  let moved = false;
+  const mv = (e) => { moved = true; pos[c.key] = { x: p0.x + (e.clientX - sx) / view.k, y: p0.y + (e.clientY - sy) / view.k }; el.style.left = pos[c.key].x + "px"; el.style.top = pos[c.key].y + "px"; };
+  const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); if (moved) { savePos(); render(); } };
+  window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+}
+$("#canvas").addEventListener("mousedown", (ev) => {
+  if (ev.target !== $("#canvas") && ev.target !== $("#world") && ev.target !== $("#wires")) return;
+  const sx = ev.clientX, sy = ev.clientY, v0 = { ...view };
+  const mv = (e) => { view.x = v0.x + e.clientX - sx; view.y = v0.y + e.clientY - sy; applyView(); };
+  const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+  window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+});
+$("#canvas").addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const r = $("#canvas").getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  const k = Math.min(2, Math.max(0.3, view.k * (ev.deltaY < 0 ? 1.1 : 0.9)));
+  view.x = mx - (mx - view.x) * k / view.k; view.y = my - (my - view.y) * k / view.k; view.k = k; applyView();
+}, { passive: false });
+
+// ------------------------------------------------------------------ palette
+function setTab(t) { tab = t; document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === t)); renderPalette(); }
+document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => { if (b.dataset.t === "port") portFilter = portFilter; setTab(b.dataset.t); }));
+const SLOTS = ["Helmet", "Body Armour", "Gloves", "Boots", "Amulet", "Ring 1", "Ring 2", "Belt", "Weapon 1", "Weapon 2"];
+let palItems = [];
+function candOf(it) {
+  if (it.nodeId) return { addNodes: [it.nodeId] };
+  if (it.unique) return { unique: it.unique, slot: it.slot };
+  if (it.gemName) return { gem: it.gemName };
+  return null;
+}
+function paletteHtml(items, header) {
+  palItems = items;
+  return header + items.map((it, i) => `<div class="item"><div class="t"><span class="n">${esc(it.name)}</span><span class="kind" style="background:var(${KCOL[it.kind] || "--dim"})">${KNAME[it.kind] || it.kind}</span></div>
+    ${it.sub ? `<div class="s">${esc(it.sub)}</div>` : ""}
+    <div class="t" style="margin-top:4px"><span id="pv${i}" class="small">${candOf(it) ? "" : "미리보기 없음"}</span>${candOf(it) || it.addGroup ? `<button data-add="${i}">추가</button>` : ""}</div></div>`).join("");
+}
+async function runPreviews() {
+  if (!S) return;
+  const idx = palItems.map((it, i) => [i, candOf(it)]).filter(([, c]) => c).slice(0, 25);
+  if (!idx.length) return;
+  const snap = palItems;
+  const r = await api({ op: "preview", candidates: idx.map(([, c]) => c) });
+  if (!r.ok || snap !== palItems) return;
+  idx.forEach(([i], j) => {
+    const x = r.results[j], el = document.getElementById("pv" + i);
+    if (!el || !x) return;
+    if (!x.ok) { el.textContent = "계산 실패"; return; }
+    const ch = (v, k) => v == null ? "" : `<span class="chip ${v > 0.05 ? "up" : v < -0.05 ? "down" : ""}">${k} ${(v > 0 ? "+" : "") + v.toFixed(1)}%</span>`;
+    el.innerHTML = ch(x.dpsPct, "피해") + " " + ch(x.ehpPct, "생존") + (x.points ? ` <span class="small">${x.points}포인트</span>` : "");
+  });
+}
+function bindAdd() {
+  $("#palette").querySelectorAll("button[data-add]").forEach((b) => b.addEventListener("click", async () => {
+    const it = palItems[+b.dataset.add];
+    prev = S.stats;
+    let ops = {};
+    if (it.nodeId) ops = { addNodes: [it.nodeId] };
+    else if (it.unique) ops = { equip: [{ slot: it.slot, unique: it.unique }] };
+    else if (it.gemName) ops = { addGem: { name: it.gemName } };
+    else if (it.addGroup) ops = { addGroup: it.addGroup };
+    const r = await api({ op: "apply", ...ops });
+    if (r.ok) { S = r.state; await syncConfig(); runPreviews(); }
+  }));
+}
+function slotForUnique(u) { return u.slot === "Ring 1" ? "Ring 1" : u.slot; }
+let uniqCache = null, gemCache = null;
+async function renderPalette() {
+  const P = $("#palette");
+  if (!S) { P.innerHTML = '<div class="small">먼저 빌드를 불러오세요.</div>'; return; }
+  if (tab === "port") {
+    const opts = Object.keys(G.ports).sort((a, b) => PN(a).localeCompare(PN(b), "ko")).map((k) => `<option value="${k}" ${portFilter && portFilter.port === k ? "selected" : ""}>${esc(PN(k))}</option>`).join("");
+    const head = `<div class="row"><select id="pf"><option value="">연결 종류 선택…</option>${opts}</select><select id="pd"><option value="out" ${portFilter && portFilter.dir === "in" ? "selected" : ""}>만드는 것</option><option value="in" ${portFilter && portFilter.dir === "out" ? "selected" : ""}>쓰는 것</option></select></div>
+      <div class="small" style="margin-bottom:6px">노드의 입력 칸을 누르면 그걸 만드는 요소가, 출력 칸을 누르면 그걸 쓰는 요소가 나옵니다.</div>`;
+    let items = [];
+    if (portFilter) {
+      const want = portFilter.dir === "in" ? "out" : "in"; // clicked an input -> show producers
+      const ascName = S.ascendancy;
+      Object.entries(G.entities).forEach(([id, e]) => {
+        if (!e[want].includes(portFilter.port)) return;
+        const it = { name: EN(id), kind: e.k, sub: TL(e.ev[want + ":" + portFilter.port]) };
+        if (id.startsWith("node:")) { if (e.k === "ascendancy") return; it.nodeId = +id.slice(5); }
+        else if (id.startsWith("unique:")) { it.unique = e.n; }
+        else if (e.k === "support" || e.k === "lineage") it.gemName = e.n;
+        else if (e.k === "skill") it.addGroup = `${e.n} 20/0  1`;
+        items.push(it);
+      });
+      const order = { notable: 0, keystone: 1, unique: 2, support: 3, lineage: 3, skill: 4 };
+      items.sort((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
+      items = items.slice(0, 60);
+    }
+    P.innerHTML = paletteHtml(items, head);
+    $("#pf").addEventListener("change", (e) => { portFilter = e.target.value ? { port: e.target.value, dir: $("#pd").value === "out" ? "in" : "out" } : null; renderPalette(); });
+    $("#pd").addEventListener("change", () => { if (portFilter) { portFilter.dir = $("#pd").value === "out" ? "in" : "out"; renderPalette(); } });
+  } else if (tab === "passive") {
+    P.innerHTML = `<div class="row"><input id="q" placeholder="이름이나 효과 (한글 또는 영문)"><button id="go">찾기</button></div><div id="res"></div>`;
+    const go = async () => {
+      const r = await api({ op: "findNodes", text: $("#q").value, limit: 40 });
+      if (!r.ok) return;
+      $("#res").innerHTML = paletteHtml(r.nodes.map((n) => { const k = KO.nodes[String(n.id)]; return { name: NN(n.id, n.name), kind: n.asc ? "ascendancy" : n.type === "Keystone" ? "keystone" : "notable", sub: (k && k.s.length ? k.s : (n.stats || []).map(TL)).join("\n") + `\n(${n.points ?? "?"}포인트)`, nodeId: n.id }; }), "");
+      bindAdd(); runPreviews();
+    };
+    $("#go").addEventListener("click", go); $("#q").addEventListener("keydown", (e) => e.key === "Enter" && go());
+    return;
+  } else if (tab === "unique") {
+    P.innerHTML = `<div class="row"><select id="slot">${SLOTS.map((s) => `<option value="${s}">${T(s)}</option>`).join("")}</select><input id="q" placeholder="이름 필터"></div><div id="res"></div>`;
+    if (!uniqCache) { const r = await api({ op: "uniques" }); uniqCache = r.uniques || []; }
+    const go = () => {
+      const slot = $("#slot").value, q = $("#q").value.toLowerCase();
+      const base = slot.replace(/ \d$/, "");
+      const list = uniqCache.filter((u) => u.slot && (u.slot === slot || u.slot.replace(/ \d$/, "") === base || (base === "Weapon" && u.slot.startsWith("Weapon"))) && (u.name.toLowerCase().includes(q) || T(u.name).includes(q))).slice(0, 40);
+      $("#res").innerHTML = paletteHtml(list.map((u) => { const e = G.entities["unique:" + u.name]; return { name: T(u.name), kind: "unique", sub: T(u.base) + (e ? "\n입력: " + e.in.map(PN).join(", ") + "\n출력: " + e.out.map(PN).join(", ") : ""), unique: u.name, slot }; }), "");
+      bindAdd(); runPreviews();
+    };
+    $("#slot").addEventListener("change", go); $("#q").addEventListener("input", () => { clearTimeout(go.t); go.t = setTimeout(go, 300); });
+    go(); return;
+  } else if (tab === "gem") {
+    P.innerHTML = `<div class="row"><input id="q" placeholder="보조젬 이름 필터"></div><div class="small" style="margin-bottom:6px">주 스킬 그룹에 넣었을 때 값</div><div id="res"></div>`;
+    if (!gemCache) { const r = await api({ op: "gems", support: true }); gemCache = r.gems || []; }
+    const go = () => {
+      const q = $("#q").value.toLowerCase();
+      const list = gemCache.filter((g) => g.name.toLowerCase().includes(q) || T(g.name).includes(q)).slice(0, 25);
+      $("#res").innerHTML = paletteHtml(list.map((g) => { const e = G.entities["gem:" + g.name]; return { name: T(g.name), kind: g.lineage ? "lineage" : "support", sub: e ? ("입력: " + e.in.map(PN).join(", ") + "  출력: " + e.out.map(PN).join(", ")) : "", gemName: g.name }; }), "");
+      bindAdd(); runPreviews();
+    };
+    $("#q").addEventListener("input", () => { clearTimeout(go.t); go.t = setTimeout(go, 400); });
+    go(); return;
+  }
+  bindAdd(); runPreviews();
+}
+
+// ------------------------------------------------------------------ load
+async function loadBuild(code) {
+  const r = await api({ op: "load", code: code.trim() });
+  if (!r.ok) return;
+  S = r.state; prev = null; override = {}; ghosts = []; selected = null; lastSent = {};
+  ORIG = { ...(S.config || {}) };
+  prodAtLoad = new Set(Object.keys(portState(cards()).prod));
+  base0 = S.stats;   // exactly PoB's numbers for this build
+  renderMainSkill();
+  render(); renderPalette();
+}
+function renderMainSkill() {
+  const sel = $("#mainSkill");
+  if (!S) { sel.innerHTML = ""; return; }
+  sel.innerHTML = S.skills.map((g, i) => {
+    const act = g.gems.filter((x) => !(G.entities["gem:" + x.name] && ["support", "lineage"].includes(G.entities["gem:" + x.name].k)));
+    const nm = act.map((x) => T(x.name)).join(" / ") || g.label || ("그룹 " + (i + 1));
+    return `<option value="${i + 1}" ${S.mainGroup === i + 1 ? "selected" : ""}>${esc(nm)}${g.enabled === false ? " (꺼짐)" : ""}</option>`;
+  }).join("");
+}
+$("#mainSkill").addEventListener("change", async (e) => {
+  prev = S.stats;
+  const r = await api({ op: "apply", mainSkill: +e.target.value });
+  if (r.ok) { S = r.state; base0 = S.stats; render(); }
+});
+$("#load").addEventListener("click", () => loadBuild($("#code").value));
+$("#showCommon").addEventListener("change", render);
+$("#hideBare").addEventListener("change", render);
+$("#exportBtn").addEventListener("click", async () => { const r = await api({ op: "export" }); if (r.ok) { $("#export").value = r.code; $("#export").select(); } });
+$("#examples").addEventListener("change", (e) => { if (e.target.value) { $("#code").value = e.target.value; loadBuild(e.target.value); } });
+
+(async () => {
+  G = await (await fetch("graph.json")).json();
+  try { KO = await (await fetch("ko.json")).json(); } catch (e) {}
+  try {
+    const ex = await (await fetch("examples.json")).json();
+    $("#examples").innerHTML += ex.map((x) => `<option value="${esc(x.code)}">${esc(x.name)}</option>`).join("");
+  } catch (e) {}
+  renderPalette();
+  checkUpdate();
+  setInterval(checkUpdate, 30 * 60 * 1000);
+  let again = null;
+  try { again = sessionStorage.getItem("pob-reload-code"); sessionStorage.removeItem("pob-reload-code"); } catch (e) {}
+  if (again) { $("#code").value = again; loadBuild(again); }
+})();
+
+// ------------------------------------------------------------------ update
+let UPD = { local: null, remote: null };
+async function checkUpdate() {
+  const btn = $("#updBtn");
+  try {
+    UPD.local = await (await fetch("version.json", { cache: "no-store" })).json();
+    const cfg = await (await fetch("update.json", { cache: "no-store" })).json();
+    const url = `https://raw.githubusercontent.com/${cfg.repo}/${cfg.branch}/pob_calc/web/version.json?t=${Date.now()}`;
+    UPD.remote = await (await fetch(url, { cache: "no-store" })).json();
+    if ((UPD.remote.version || 0) > (UPD.local.version || 0)) {
+      btn.classList.add("has");
+      btn.textContent = `업데이트 있음 (v${UPD.remote.version})`;
+      btn.title = `현재 v${UPD.local.version} → 새 버전 v${UPD.remote.version}\n${UPD.remote.notes || ""}`;
+    } else {
+      btn.classList.remove("has");
+      btn.textContent = `업데이트 (v${UPD.local.version})`;
+      btn.title = `최신 버전입니다 (v${UPD.local.version}). 눌러도 다시 받아서 적용합니다.`;
+    }
+  } catch (e) {
+    btn.textContent = UPD.local ? `업데이트 (v${UPD.local.version})` : "업데이트";
+    btn.title = "새 버전을 확인하지 못했습니다. 눌러서 바로 받아볼 수 있습니다.";
+  }
+}
+$("#updBtn").addEventListener("click", async () => {
+  const btn = $("#updBtn");
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = "받는 중…";
+  try {
+    const r = await (await fetch("/api", { method: "POST", body: JSON.stringify({ op: "update" }) })).json();
+    if (!r.ok || !r.updated) {
+      showMsg("업데이트 실패: " + ((r.log || r.error || "").split("UPDATE_FAIL").pop().trim() || "알 수 없는 오류"));
+      btn.disabled = false; checkUpdate(); return;
+    }
+    btn.textContent = "다시 시작하는 중…";
+    try { sessionStorage.setItem("pob-reload-code", $("#code").value || ""); } catch (e) {}
+    await new Promise((ok) => setTimeout(ok, 2500));
+    for (let i = 0; i < 60; i++) {
+      try { const t = await fetch("version.json", { cache: "no-store" }); if (t.ok) break; } catch (e) {}
+      await new Promise((ok) => setTimeout(ok, 1000));
+    }
+    location.reload();
+  } catch (e) {
+    showMsg("업데이트 요청 실패: " + e.message);
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
