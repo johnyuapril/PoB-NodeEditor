@@ -59,9 +59,11 @@ button.primary { background: #24406b; border-color: #335a95; }
 .srow { font-size: 11px; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow.empty { color: #666; cursor: pointer; font-style: italic; }
 .srow.empty:hover { color: #aaa; }
+.dot.local { border-radius: 2px; transform: rotate(45deg) scale(.85); }
+.selfmark { font-style: normal; font-size: 9px; color: #ddd; background: rgba(255,255,255,.12); border-radius: 3px; padding: 0 3px; margin-left: 3px; }
 .dot.sock { border-radius: 3px; cursor: pointer; }
 .prow { display: flex; justify-content: space-between; font-size: 11px; padding: 0 12px; }
-.prow span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100px; cursor: pointer; }
+.prow span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 62%; cursor: pointer; }
 .prow span:hover { text-decoration: underline; }
 .dot { position: absolute; width: 12px; height: 12px; border-radius: 50%; border: 2px solid; cursor: crosshair; box-sizing: border-box; }
 .small { color: var(--dim); font-size: 11px; }
@@ -150,8 +152,14 @@ let pos = {};
 let selected = null;
 let view = { x: 20, y: 20, k: 0.9 };
 let tab = "port", portFilter = null;
-try { pos = JSON.parse(localStorage.getItem("pob-node-pos4") || "{}"); } catch (e) { pos = {}; }
-const savePos = () => { try { localStorage.setItem("pob-node-pos4", JSON.stringify(pos)); } catch (e) {} };
+// positions: automatic layout every render, except cards the user dragged (kept per build)
+let dragged = {}, buildId = "";
+const hashStr = (t) => { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0; return h.toString(36); };
+function loadDragged(code) {
+  buildId = hashStr(code || "");
+  try { dragged = JSON.parse(localStorage.getItem("pob-drag:" + buildId) || "{}"); } catch (e) { dragged = {}; }
+}
+const savePos = () => { try { localStorage.setItem("pob-drag:" + buildId, JSON.stringify(dragged)); } catch (e) {} };
 
 // ------------------------------------------------------------------ server
 let queue = Promise.resolve();
@@ -337,6 +345,13 @@ function buildSockets(list) {
     if (k && SOCK[k]) SOCK[k].push(c);
   });
 }
+// support/lineage effects that only fire from the supported skill's own action (its own crits, kills, remnants, triggers,
+// channelling, warcries): they connect only inside the same skill group, never to every producer in the build
+const SELF_PORTS = new Set(["CritRecently", "KilledRecently", "Infusion", "Trigger", "Energy", "Channelling", "UsedWarcryRecently"]);
+const isGemSupport = (c) => c && (c.kind === "support" || c.kind === "lineage");
+const isLocal = (c, pn) => isGemSupport(c) && SELF_PORTS.has(pn);
+const sameGroup = (a, b) => a.gem && b.gem && a.gem.group === b.gem.group;
+const linkOK = (a, b, pn) => (!isLocal(a, pn) && !isLocal(b, pn)) || sameGroup(a, b);
 const nSock = (c) => (SOCK[c.key] ? Math.max(SOCKETS, SOCK[c.key].length) : 0);
 function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + nSock(c) * SROW + (nSock(c) ? 7 : 0) + st.row * Math.max(ins.length, outs.length) + (st.pill ? 4 : 8); }
 function layout(list) {
@@ -362,7 +377,8 @@ function layout(list) {
   });
   const colX = { 2: 580, 3: 880, 4: 1180 }, colY = { 2: 20, 3: 20, 4: 20 };
   list.forEach((c) => { if (def[c.key] || !colX[c.col]) return; def[c.key] = { x: colX[c.col], y: colY[c.col] }; colY[c.col] += cardH(c) + 18; });
-  list.forEach((c) => { if (!pos[c.key]) pos[c.key] = def[c.key] || { x: 20, y }; });
+  pos = {};
+  list.forEach((c) => { pos[c.key] = dragged[c.key] || def[c.key] || { x: 20, y }; });
 }
 // cubic bezier point + tangent at t, for the flow arrow in the middle of each wire
 function bez(s, c1, c2, t, u) {
@@ -408,7 +424,7 @@ function render() {
     let rowsHtml = "";
     for (let i = 0; i < rows; i++) {
       const a = ins[i], b = outs[i];
-      rowsHtml += `<div class="prow" style="height:${st.row}px;line-height:${st.row}px"><span data-port="${a || ""}" data-dir="in" style="color:${a ? PC(a) : ""}" title="${esc(a ? TL(c.ent.ev["in:" + a] || "") : "")}">${a ? esc(PN(a)) : ""}</span><span data-port="${b || ""}" data-dir="out" style="color:${b ? PC(b) : ""}" title="${esc(b ? TL(c.ent.ev["out:" + b] || "") : "")}">${b ? esc(PN(b)) : ""}</span></div>`;
+      rowsHtml += `<div class="prow" style="height:${st.row}px;line-height:${st.row}px"><span data-port="${a || ""}" data-dir="in" style="color:${a ? PC(a) : ""}" title="${esc(a ? TL(c.ent.ev["in:" + a] || "") : "")}">${a ? esc(PN(a)) + (isLocal(c, a) ? ' <i class="selfmark">이 스킬</i>' : "") : ""}</span><span data-port="${b || ""}" data-dir="out" style="color:${b ? PC(b) : ""}" title="${esc(b ? TL(c.ent.ev["out:" + b] || "") : "")}">${b ? esc(PN(b)) : ""}</span></div>`;
     }
     const sub = c.kind === "rare" || c.kind === "unique" ? T(c.slot) : "";
     const btns = c.virtual ? "" : `<button data-a="toggle" title="${c.off ? "켜기" : "끄기"}">${c.off ? "○" : "●"}</button><button data-a="remove" title="빼기">✕</button>`;
@@ -438,10 +454,12 @@ function render() {
     const pinY = (i) => off0 + i * st.row + st.row / 2;
     ins.forEach((pn, i) => {
       const d = document.createElement("div");
-      const missing = !ps.prod[pn];
+      const local = isLocal(c, pn);
+      const missing = local ? false : !ps.prod[pn];
       d.className = "dot"; d.style.left = "-6px"; d.style.top = (pinY(i) - 6) + "px";
       d.style.background = missing ? "transparent" : PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] || missing ? 1 : 0.4;
-      d.title = PN(pn) + (missing ? " (만드는 요소 없음)" : ps.active[pn] ? "" : " (꺼짐)");
+      d.title = PN(pn) + (local ? " (보조받는 스킬 자신에게서만: 다른 스킬의 효과와는 연결되지 않음)" : missing ? " (만드는 요소 없음)" : ps.active[pn] ? "" : " (꺼짐)");
+      if (local) d.classList.add("local");
       d.dataset.port = pn; d.dataset.dir = "in"; el.appendChild(d);
       dots[c.key + "|in|" + pn] = { x: p.x, y: p.y + pinY(i) };
     });
@@ -449,6 +467,7 @@ function render() {
       const d = document.createElement("div");
       d.className = "dot"; d.style.left = (st.w - 6) + "px"; d.style.top = (pinY(i) - 6) + "px";
       d.style.background = PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] ? 1 : 0.4; d.title = PN(pn);
+      if (isLocal(c, pn)) { d.classList.add("local"); d.title += " (보조받는 스킬 자신에게만)"; }
       d.dataset.port = pn; d.dataset.dir = "out"; el.appendChild(d);
       dots[c.key + "|out|" + pn] = { x: p.x + st.w, y: p.y + pinY(i) };
     });
@@ -482,7 +501,7 @@ function render() {
     if (a.off) return;
     portsOf(a).outs.forEach((pn) => {
       list.forEach((b) => {
-        if (b === a || b.off || !portsOf(b).ins.includes(pn)) return;
+        if (b === a || b.off || !portsOf(b).ins.includes(pn) || !linkOK(a, b, pn)) return;
         const s = dots[a.key + "|out|" + pn], t = dots[b.key + "|in|" + pn];
         if (!s || !t) return;
         const inCycle = cyc.edge.has(a.key + ">" + b.key);
@@ -506,7 +525,7 @@ function findCycles(list, ps) {
   const adj = new Map(on.map((c) => [c.key, []]));
   const ports = new Map();
   on.forEach((a) => portsOf(a).outs.forEach((pn) => on.forEach((b) => {
-    if (a !== b && portsOf(b).ins.includes(pn)) {
+    if (a !== b && portsOf(b).ins.includes(pn) && linkOK(a, b, pn)) {
       adj.get(a.key).push(b.key);
       const k = a.key + ">" + b.key; (ports.get(k) || ports.set(k, new Set()).get(k)).add(pn);
     }
@@ -649,7 +668,7 @@ function dragCard(ev, c, el) {
   const sx = ev.clientX, sy = ev.clientY, p0 = { ...pos[c.key] };
   let moved = false;
   const mv = (e) => { moved = true; pos[c.key] = { x: p0.x + (e.clientX - sx) / view.k, y: p0.y + (e.clientY - sy) / view.k }; el.style.left = pos[c.key].x + "px"; el.style.top = pos[c.key].y + "px"; };
-  const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); if (moved) { savePos(); render(); } };
+  const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); if (moved) { dragged[c.key] = pos[c.key]; savePos(); render(); } };
   window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
 }
 $("#canvas").addEventListener("mousedown", (ev) => {
@@ -783,6 +802,7 @@ async function loadBuild(code) {
   const r = await api({ op: "load", code: code.trim() });
   if (!r.ok) return;
   S = r.state; prev = null; override = {}; ghosts = []; selected = null; lastSent = {};
+  loadDragged(code.trim());
   ORIG = { ...(S.config || {}) };
   prodAtLoad = new Set(Object.keys(portState(cards()).prod));
   base0 = S.stats;   // exactly PoB's numbers for this build
