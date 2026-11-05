@@ -14,7 +14,7 @@
 return function(H)
 	local dk = H.dkjson
 	local KEYS = { "FullDPS", "CombinedDPS", "TotalEHP", "Life", "EnergyShield", "Mana", "Spirit", "SpiritUnreserved", "Armour", "Evasion",
-		"FireResist", "ColdResist", "LightningResist", "ChaosResist", "CritChance", "Speed", "AverageHit", "PhysicalMaximumHitTaken" }
+		"FireResist", "ColdResist", "LightningResist", "ChaosResist", "CritChance", "CritMultiplier", "Speed", "AverageHit", "PhysicalMaximumHitTaken" }
 
 	local function stats(out)
 		local s = {}

@@ -530,6 +530,58 @@ local ok, err = xpcall(function()
 		end
 		response.gems = gems
 	end
+	-- PoB's own stat -> mod mapping for every gem: what each gem changes (mod names) and which conditions it checks (tags)
+	if req.gemMods then
+		local function tagList(mod)
+			local t = {}
+			for i = 1, 8 do
+				local tg = mod[i]
+				if type(tg) == "table" then
+					local x = {}
+					for k, v in pairs(tg) do if type(v) ~= "table" and type(v) ~= "function" then x[k] = v elseif k == "varList" then x[k] = v end end
+					t[#t+1] = x
+				end
+			end
+			return t
+		end
+		local function modRec(mod, stat)
+			local v = mod.value
+			if type(v) == "table" then
+				local inner = v.mod
+				v = { mod = inner and { name = inner.name, type = inner.type, tags = tagList(inner) } or nil, key = v.key, keyOfScaledMod = v.keyOfScaledMod }
+			end
+			return { stat = stat, name = mod.name, type = mod.type, tags = tagList(mod), value = (type(v) ~= "function") and v or nil }
+		end
+		local out = {}
+		for id, gd in pairs(build.data.gems) do
+			local ge = gd.grantedEffect
+			if ge and not ge.legacy then
+				local rec = { name = gd.name, support = ge.support or false, mods = {}, flags = {}, unmapped = {} }
+				for _, statSet in ipairs(ge.statSets or {}) do
+					pcall(function()
+						local inst = { level = math.min(gd.naturalMaxLevel or 20, 20), quality = 0 }
+						local stats = calcLib.buildSkillInstanceStats(inst, ge, statSet)
+						for stat, val in pairs(stats) do
+							local map = statSet.statMap and statSet.statMap[stat]
+							if map then
+								if map.skillFlag then rec.flags[#rec.flags+1] = map.skillFlag end
+								for _, m in ipairs(map) do
+									if m.name then rec.mods[#rec.mods+1] = modRec(m, stat)
+									else for _, mm in ipairs(m) do if type(mm) == "table" and mm.name then rec.mods[#rec.mods+1] = modRec(mm, stat) end end end
+								end
+							elseif val ~= 0 then
+								rec.unmapped[#rec.unmapped+1] = stat
+							end
+						end
+						for _, m in ipairs(statSet.baseMods or {}) do if m.name then rec.mods[#rec.mods+1] = modRec(m, "<base>") end end
+					end)
+				end
+				table.sort(rec.unmapped)
+				out[#out+1] = rec
+			end
+		end
+		response.gemMods = out
+	end
 	if req.listClasses then
 		local cl = {}
 		for name, id in pairs(build.spec.tree.classNameMap) do

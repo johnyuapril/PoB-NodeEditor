@@ -59,6 +59,7 @@ button.primary { background: #24406b; border-color: #335a95; }
 .srow { font-size: 11px; padding: 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow.empty { color: #666; cursor: pointer; font-style: italic; }
 .srow.empty:hover { color: #aaa; }
+.dot.guess { border-style: dashed; background: transparent !important; }
 .dot.local { border-radius: 2px; transform: rotate(45deg) scale(.85); }
 .selfmark { font-style: normal; font-size: 9px; color: #ddd; background: rgba(255,255,255,.12); border-radius: 3px; padding: 0 3px; margin-left: 3px; }
 .dot.sock { border-radius: 3px; cursor: pointer; }
@@ -89,7 +90,9 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
     <textarea id="code" placeholder="PoB 빌드 코드 붙여넣기"></textarea>
     <button class="primary" id="load">불러오기</button>
     <label class="small"><input type="checkbox" id="showCommon" checked> 상황 조건도 표시</label>
-    <label class="small"><input type="checkbox" id="hideBare" checked> 연결 없는 카드 숨기기</label><span class="small" id="hiddenInfo"></span>
+    <label class="small"><input type="checkbox" id="hideBare" checked> 연결 없는 카드 숨기기</label>
+    <label class="small" title="치명타 확률, 치명타 피해 보너스, 속도처럼 전체에 적용되는 능력치를 '전역 효과' 카드로 모아 봅니다"><input type="checkbox" id="showStats" checked> 전역 효과</label>
+    <label class="small" title="PoB가 해석하지 못한 문장에서 단어로 읽은 연결(점선)을 숨깁니다"><input type="checkbox" id="hideGuess"> 추정 연결 숨기기</label><span class="small" id="hiddenInfo"></span>
     <button id="updBtn" title="새 버전이 있으면 받아서 바로 적용합니다">업데이트</button>
     <div id="stats"></div>
   </div>
@@ -202,17 +205,18 @@ function renderStats() {
 
 // ------------------------------------------------------------------ cards from state
 const KCOL = { situation: "--warn", skill: "--skill", support: "--support", lineage: "--support", unique: "--unique", rare: "--rare", notable: "--passive", keystone: "--passive", ascendancy: "--asc" };
-const KNAME = { situation: "상황", skill: "스킬", support: "보조", lineage: "혈통", unique: "고유", rare: "희귀", notable: "주요", keystone: "핵심", ascendancy: "전직" };
+const KNAME = { global: "전역", situation: "상황", skill: "스킬", support: "보조", lineage: "혈통", unique: "고유", rare: "희귀", notable: "주요", keystone: "핵심", ascendancy: "전직" };
 // ports of an item from its mod lines (rare items, or uniques missing from the graph)
 function modEntity(mods) {
-  const e = { in: [], out: [], ev: {} };
+  const e = { in: [], out: [], ev: {}, st: [], src: {}, sc: {} };
   (mods || []).forEach((l) => {
     const m = (G.modPorts || {})[String(l).replace(/\{[^}]*\}/g, "").replace(NUMRX, "#").trim().toLowerCase()];
     if (!m) return;
-    m.in.forEach((p) => { if (!e.in.includes(p)) { e.in.push(p); e.ev["in:" + p] = l; } });
-    m.out.forEach((p) => { if (!e.out.includes(p)) { e.out.push(p); e.ev["out:" + p] = l; } });
+    m.in.forEach((p) => { if (!e.in.includes(p)) { e.in.push(p); e.ev["in:" + p] = l; e.src["in:" + p] = m.src; } });
+    m.out.forEach((p) => { if (!e.out.includes(p)) { e.out.push(p); e.ev["out:" + p] = l; e.src["out:" + p] = m.src; } });
+    (m.st || []).forEach((p) => { if (!e.st.includes(p)) { e.st.push(p); e.ev["out:" + p] = l; e.src["out:" + p] = "pob"; } });
   });
-  return e.in.length || e.out.length ? e : null;
+  return e.in.length || e.out.length || e.st.length ? e : null;
 }
 function short(n) { return String(n || "").split(",")[0]; }
 function cards() {
@@ -247,15 +251,25 @@ function cards() {
   const sit = new Set();
   out.forEach((c) => { if (c.ent && !c.off) c.ent.in.forEach((p) => { if (G.ports[p] && G.ports[p].common) sit.add(p); }); });
   if (sit.size) out.unshift({ key: "situation", kind: "situation", name: "전투 상황", ent: { in: [], out: [...sit], ev: {} }, col: 0, virtual: true });
+  // global stats (crit chance, crit damage bonus, speed...): one card collects every source, they never feed mechanic ports
+  const gst = [];
+  out.forEach((c) => { if (c.ent && !c.off) (c.ent.st || []).forEach((p) => { if (!gst.includes(p)) gst.push(p); }); });
+  if (gst.length) {
+    const order = Object.keys(G.stats || {});
+    gst.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+    out.push({ key: "global", kind: "global", name: "전역 효과", ent: { in: gst, out: [], ev: {} }, col: 5, virtual: true });
+  }
   cards.normals = normals;
   return out;
 }
 function portsOf(c) {
   const e = c.ent; if (!e) return { ins: [], outs: [] };
-  const show = $("#showCommon").checked;
-  const ok = (p) => G.ports[p] && (show || !G.ports[p].common);
+  const show = $("#showCommon").checked, stats = $("#showStats").checked, noGuess = $("#hideGuess").checked;
+  const ok = (p, d) => G.ports[p] && (show || !G.ports[p].common) && !(noGuess && (e.src || {})[d + ":" + p] === "guess");
+  if (c.kind === "global") return { ins: stats ? e.in : [], outs: [] };
   // a situational output nobody in the build uses is noise: hide it
-  return { ins: e.in.filter(ok), outs: e.out.filter((p) => ok(p) && (!G.ports[p].common || !CONSUMED || CONSUMED.has(p))) };
+  const outs = e.out.filter((p) => ok(p, "out") && (!G.ports[p].common || !CONSUMED || CONSUMED.has(p)));
+  return { ins: e.in.filter((p) => ok(p, "in")), outs: stats ? outs.concat(e.st || []) : outs };
 }
 
 // ------------------------------------------------------------------ connection state
@@ -315,6 +329,7 @@ const PCOL = {
 };
 function PC(p) {
   if (PCOL[p]) return PCOL[p];
+  if (p.startsWith("stat:")) return "#8fa3bf";
   const d = G.ports[p];
   if (d && d.common) return "#9aa3ad";
   if (p.startsWith("enemy:")) return "#e06bd8";
@@ -323,6 +338,7 @@ function PC(p) {
 }
 const STYLE = {
   situation: { w: 210, head: 30, row: 22, hc: "linear-gradient(#a33434,#5e1b1b)", glyph: "◆" },
+  global: { w: 250, head: 30, row: 22, hc: "linear-gradient(#5f6b7a,#2e3540)", glyph: "Σ" },
   skill: { w: 230, head: 30, row: 22, hc: "linear-gradient(#3b6fc0,#1d3b6a)", glyph: "ƒ" },
   unique: { w: 230, head: 30, row: 22, hc: "linear-gradient(#c0732a,#6b3a10)", glyph: "★" },
   rare: { w: 230, head: 30, row: 22, hc: "linear-gradient(#a8932a,#5f5414)", glyph: "◇" },
@@ -349,7 +365,8 @@ function buildSockets(list) {
 // channelling, warcries): they connect only inside the same skill group, never to every producer in the build
 const SELF_PORTS = new Set(["CritRecently", "KilledRecently", "Infusion", "Trigger", "Energy", "Channelling", "UsedWarcryRecently"]);
 const isGemSupport = (c) => c && (c.kind === "support" || c.kind === "lineage");
-const isLocal = (c, pn) => isGemSupport(c) && SELF_PORTS.has(pn);
+const isLocal = (c, pn) => isGemSupport(c) && (((c.ent && c.ent.sc) || {})["in:" + pn] === "skill" || ((c.ent && c.ent.sc) || {})["out:" + pn] === "skill" || SELF_PORTS.has(pn));
+const srcOf = (c, d, pn) => ((c.ent && c.ent.src) || {})[d + ":" + pn];
 const sameGroup = (a, b) => a.gem && b.gem && a.gem.group === b.gem.group;
 const linkOK = (a, b, pn) => (!isLocal(a, pn) && !isLocal(b, pn)) || sameGroup(a, b);
 const nSock = (c) => (SOCK[c.key] ? Math.max(SOCKETS, SOCK[c.key].length) : 0);
@@ -375,7 +392,7 @@ function layout(list) {
     cs.forEach((c) => { if (!def[c.key]) { def[c.key] = { x: 20, y: ly }; ly += cardH(c) + 10; } });
     y = Math.max(ly, ry) + 36;
   });
-  const colX = { 2: 580, 3: 880, 4: 1180 }, colY = { 2: 20, 3: 20, 4: 20 };
+  const colX = { 2: 580, 3: 880, 4: 1180, 5: 1480 }, colY = { 2: 20, 3: 20, 4: 20, 5: 20 };
   list.forEach((c) => { if (def[c.key] || !colX[c.col]) return; def[c.key] = { x: colX[c.col], y: colY[c.col] }; colY[c.col] += cardH(c) + 18; });
   pos = {};
   list.forEach((c) => { pos[c.key] = dragged[c.key] || def[c.key] || { x: 20, y }; });
@@ -393,15 +410,25 @@ function wire(s, t, color, opts) {
   const c1 = { x: s.x + dx, y: s.y }, c2 = { x: t.x - dx, y: t.y };
   const m = bez(s, c1, c2, t, 0.5), A = 7;
   const tri = [[A, 0], [-A, -A * 0.75], [-A, A * 0.75]].map(([px, py]) => `${m.x + px * Math.cos(m.a) - py * Math.sin(m.a)},${m.y + px * Math.sin(m.a) + py * Math.cos(m.a)}`).join(" ");
-  const op = opts.on ? 1 : 0.35;
-  return `<g opacity="${op}"><path d="M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}" stroke="${color}" stroke-width="${opts.w || 2}" ${opts.on ? "" : 'stroke-dasharray="6 5"'} ${opts.glow ? 'filter="url(#glow)"' : ""} ${opts.port ? `data-port="${opts.port}"` : 'style="pointer-events:none"'}>${opts.title ? `<title>${esc(opts.title)}</title>` : ""}</path>
+  const op = opts.op != null ? opts.op : opts.on ? 1 : 0.35;
+  return `<g opacity="${op}"><path d="M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}" stroke="${color}" stroke-width="${opts.w || 2}" ${opts.dash ? `stroke-dasharray="${opts.dash}"` : opts.on ? "" : 'stroke-dasharray="6 5"'} ${opts.glow ? 'filter="url(#glow)"' : ""} ${opts.port ? `data-port="${opts.port}"` : 'style="pointer-events:none"'}>${opts.title ? `<title>${esc(opts.title)}</title>` : ""}</path>
     <polygon points="${tri}" fill="${color}" style="pointer-events:none"/></g>`;
 }
 let CONSUMED = null;
+function gval(p) {
+  const s = (S && S.stats) || {};
+  if (p === "stat:CritChance" && s.CritChance != null) return s.CritChance.toFixed(1) + "%";
+  if (p === "stat:CritMultiplier" && s.CritMultiplier != null) return "×" + s.CritMultiplier.toFixed(2);
+  if (p === "stat:Speed" && s.Speed != null) return s.Speed.toFixed(2) + "/초";
+  return "";
+}
+let SRCN = {};
+const srcCount = (p) => SRCN[p] || 0;
 function render() {
   CONSUMED = null;
   const all = cards();
   CONSUMED = new Set(all.filter((c) => c.ent && !c.off).flatMap((c) => c.ent.in));
+  SRCN = {}; all.forEach((c) => { if (c.ent && !c.off && c.kind !== "global") (c.ent.st || []).forEach((p) => { SRCN[p] = (SRCN[p] || 0) + 1; }); });
   const hide = $("#hideBare").checked;
   const has = (c) => { const p = portsOf(c); return p.ins.length || p.outs.length; };
   const liveGroups = new Set(all.filter((c) => c.gem && has(c)).map((c) => c.gem.group));
@@ -424,6 +451,7 @@ function render() {
     let rowsHtml = "";
     for (let i = 0; i < rows; i++) {
       const a = ins[i], b = outs[i];
+      if (c.kind === "global") { rowsHtml += `<div class="prow" style="height:${st.row}px;line-height:${st.row}px"><span style="color:${PC(a)};max-width:70%">${esc(PN(a))}</span><span class="small">${esc(gval(a))} · ${srcCount(a)}곳</span></div>`; continue; }
       rowsHtml += `<div class="prow" style="height:${st.row}px;line-height:${st.row}px"><span data-port="${a || ""}" data-dir="in" style="color:${a ? PC(a) : ""}" title="${esc(a ? TL(c.ent.ev["in:" + a] || "") : "")}">${a ? esc(PN(a)) + (isLocal(c, a) ? ' <i class="selfmark">이 스킬</i>' : "") : ""}</span><span data-port="${b || ""}" data-dir="out" style="color:${b ? PC(b) : ""}" title="${esc(b ? TL(c.ent.ev["out:" + b] || "") : "")}">${b ? esc(PN(b)) : ""}</span></div>`;
     }
     const sub = c.kind === "rare" || c.kind === "unique" ? T(c.slot) : "";
@@ -460,6 +488,7 @@ function render() {
       d.style.background = missing ? "transparent" : PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] || missing ? 1 : 0.4;
       d.title = PN(pn) + (local ? " (보조받는 스킬 자신에게서만: 다른 스킬의 효과와는 연결되지 않음)" : missing ? " (만드는 요소 없음)" : ps.active[pn] ? "" : " (꺼짐)");
       if (local) d.classList.add("local");
+      if (srcOf(c, "in", pn) === "guess") { d.classList.add("guess"); d.title += " — 추정(PoB가 해석하지 못한 문장)"; }
       d.dataset.port = pn; d.dataset.dir = "in"; el.appendChild(d);
       dots[c.key + "|in|" + pn] = { x: p.x, y: p.y + pinY(i) };
     });
@@ -468,6 +497,7 @@ function render() {
       d.className = "dot"; d.style.left = (st.w - 6) + "px"; d.style.top = (pinY(i) - 6) + "px";
       d.style.background = PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] ? 1 : 0.4; d.title = PN(pn);
       if (isLocal(c, pn)) { d.classList.add("local"); d.title += " (보조받는 스킬 자신에게만)"; }
+      if (srcOf(c, "out", pn) === "guess") { d.classList.add("guess"); d.title += " — 추정(PoB가 해석하지 못한 문장)"; }
       d.dataset.port = pn; d.dataset.dir = "out"; el.appendChild(d);
       dots[c.key + "|out|" + pn] = { x: p.x + st.w, y: p.y + pinY(i) };
     });
@@ -505,8 +535,10 @@ function render() {
         const s = dots[a.key + "|out|" + pn], t = dots[b.key + "|in|" + pn];
         if (!s || !t) return;
         const inCycle = cyc.edge.has(a.key + ">" + b.key);
-        paths += wire(s, t, PC(pn), { on: ps.active[pn], w: inCycle ? 4 : 2, glow: inCycle, port: pn,
-          title: `${PN(pn)}: ${a.name} → ${b.name}${inCycle ? " (순환 고리)" : ""} — 누르면 ${ps.active[pn] ? "끊기" : "잇기"}` });
+        if (pn.startsWith("stat:")) { paths += wire(s, t, PC(pn), { on: true, w: 1.2, op: 0.45, title: `${PN(pn)}: ${a.name} → 전역 효과` }); return; }
+        const guess = srcOf(a, "out", pn) === "guess" || srcOf(b, "in", pn) === "guess";
+        paths += wire(s, t, PC(pn), { on: ps.active[pn], w: inCycle ? 4 : guess ? 1.5 : 2, glow: inCycle, port: pn, dash: guess ? "2 4" : null,
+          title: `${PN(pn)}: ${a.name} → ${b.name}${inCycle ? " (순환 고리)" : ""}${guess ? " (추정: PoB가 해석하지 못한 문장에서 읽음)" : ""} — 누르면 ${ps.active[pn] ? "끊기" : "잇기"}` });
       });
     });
   });
@@ -826,11 +858,14 @@ $("#mainSkill").addEventListener("change", async (e) => {
 $("#load").addEventListener("click", () => loadBuild($("#code").value));
 $("#showCommon").addEventListener("change", render);
 $("#hideBare").addEventListener("change", render);
+$("#showStats").addEventListener("change", render);
+$("#hideGuess").addEventListener("change", render);
 $("#exportBtn").addEventListener("click", async () => { const r = await api({ op: "export" }); if (r.ok) { $("#export").value = r.code; $("#export").select(); } });
 $("#examples").addEventListener("change", (e) => { if (e.target.value) { $("#code").value = e.target.value; loadBuild(e.target.value); } });
 
 (async () => {
   G = await (await fetch("graph.json")).json();
+  Object.entries(G.stats || {}).forEach(([k, kr]) => { G.ports[k] = { kr, common: false, config: {}, stat: true }; });
   try { KO = await (await fetch("ko.json")).json(); } catch (e) {}
   try {
     const ex = await (await fetch("examples.json")).json();
