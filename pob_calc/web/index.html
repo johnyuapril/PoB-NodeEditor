@@ -232,6 +232,24 @@ function cards() {
       if (kind === "skill" && !active) active = key;
       out.push({ key, kind, name: T(gem.name), en: gem.name, ent, off: gem.enabled === false, gem: { group: gi + 1, idx: j + 1 }, col: 1, groupKey: () => active, label: g.label });
     });
+    // meta skills (Cast on Critical, invocations...): the other active skills socketed in the same group are what they trigger
+    const mine = out.filter((c) => c.gem && c.gem.group === gi + 1 && c.kind === "skill");
+    const meta = mine.find((c) => c.ent && c.ent.out.includes("Trigger") && c.ent.out.includes("Energy"));
+    if (meta) mine.forEach((c) => {
+      if (c === meta) return;
+      const e = c.ent || { in: [], out: [], ev: {}, src: {}, sc: {} };
+      c.ent = { ...e, in: e.in.includes("Trigger") ? e.in : e.in.concat("Trigger"), ev: { ...e.ev, "in:Trigger": `${meta.en}에 꽂혀 발동됨` },
+        src: { ...(e.src || {}), "in:Trigger": "pob" }, sc: { ...(e.sc || {}), "in:Trigger": "group" } };
+      c.triggeredBy = meta.key;
+    });
+    // supports in a meta group belong to the triggered skill, except supports made for meta gems (energy / trigger ones)
+    const trig = meta && mine.find((c) => c !== meta);
+    if (trig) out.forEach((c) => {
+      if (!(c.gem && c.gem.group === gi + 1 && (c.kind === "support" || c.kind === "lineage"))) return;
+      const forMeta = c.ent && ["Energy", "Trigger"].some((p) => c.ent.in.includes(p) || c.ent.out.includes(p));
+      const k = forMeta ? meta.key : trig.key;
+      c.groupKey = () => k;
+    });
   });
   S.items.forEach((it) => {
     if (it.slot.startsWith("Weapon 2 Swap") || it.slot.startsWith("Weapon 1 Swap")) return;
@@ -368,7 +386,8 @@ const isGemSupport = (c) => c && (c.kind === "support" || c.kind === "lineage");
 const isLocal = (c, pn) => isGemSupport(c) && (((c.ent && c.ent.sc) || {})["in:" + pn] === "skill" || ((c.ent && c.ent.sc) || {})["out:" + pn] === "skill" || SELF_PORTS.has(pn));
 const srcOf = (c, d, pn) => ((c.ent && c.ent.src) || {})[d + ":" + pn];
 const sameGroup = (a, b) => a.gem && b.gem && a.gem.group === b.gem.group;
-const linkOK = (a, b, pn) => (!isLocal(a, pn) && !isLocal(b, pn)) || sameGroup(a, b);
+const groupPort = (a, b, pn) => pn === "Trigger" && a.gem && b.gem;
+const linkOK = (a, b, pn) => groupPort(a, b, pn) ? (b.triggeredBy ? b.triggeredBy === a.key : sameGroup(a, b)) : ((!isLocal(a, pn) && !isLocal(b, pn)) || sameGroup(a, b));
 const nSock = (c) => (SOCK[c.key] ? Math.max(SOCKETS, SOCK[c.key].length) : 0);
 function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + nSock(c) * SROW + (nSock(c) ? 7 : 0) + st.row * Math.max(ins.length, outs.length) + (st.pill ? 4 : 8); }
 function layout(list) {
