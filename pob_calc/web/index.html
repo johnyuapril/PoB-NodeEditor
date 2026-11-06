@@ -1527,13 +1527,17 @@ async function renderMech(P) {
     const hidden = m.makers.filter((c) => { const v = contrib(c); return v != null && Math.abs(v) < 0.5; });
     const nm = (arr) => arr.slice(0, 10).map((c) => { const v = contrib(c); return `${esc(c.name)}${v != null && Math.abs(v) >= 0.5 ? ` <span class="small">(${f(v)})</span>` : ""}`; }).join(", ") + (arr.length > 10 ? ` 외 ${arr.length - 10}` : "");
     const amt = m.amount && m.amount.max != null ? ` · 지금 ${m.amount.cur ?? "?"} / 최대 ${m.amount.max}` : "";
-    h += `<div class="item" style="margin-top:6px"><div class="n">${esc(m.name)} <span class="chip down">피해 ${f(m.dpsPct)}</span>${(m.ehpPct ?? 0) <= -1 ? ` <span class="chip down">생존 ${f(m.ehpPct)}</span>` : ""}<span class="small">${esc(amt)}</span></div>
+    h += `<div class="item" style="margin-top:6px" data-mk="${esc(m.key)}"><div class="n">${esc(m.name)} <span class="chip down">피해 ${f(m.dpsPct)}</span>${(m.ehpPct ?? 0) <= -1 ? ` <span class="chip down">생존 ${f(m.ehpPct)}</span>` : ""}<span class="small">${esc(amt)}</span></div>
       <div class="s"><b>만드는 것</b> ${m.makers.length ? nm(m.makers) : '<span style="color:#ff8a7a">⚠ 빌드 안에 없음: PoB 설정으로만 켜져 있어요. 실제 게임에서는 유지되지 않을 수 있어요</span>'}</div>
       <div class="s"><b>쓰는·키우는 것</b> ${m.users.length ? nm(m.users) : "없음"}</div>
-      ${hidden.length ? `<div class="s" style="color:#e5b94e">PoB에서 0%로 보이지만 이 메커니즘을 만드는 카드: ${esc(hidden.map((c) => c.name).join(", "))}. 이걸 다 빼면 ${esc(m.name)}이(가) 사라져 피해 ${f(m.dpsPct)}가 돼요.</div>` : ""}</div>`;
+      ${hidden.length ? `<div class="s" style="color:#e5b94e">PoB에서 0%로 보이지만 이 메커니즘을 만드는 카드: ${esc(hidden.map((c) => c.name).join(", "))}. 이걸 다 빼면 ${esc(m.name)}이(가) 사라져 피해 ${f(m.dpsPct)}가 돼요.</div>` : ""}<div class="mdx"></div></div>`;
   });
   const minor = (MECH.mechs.length === 0) ? '<div class="small" style="margin-top:6px">켜진 조건 중 피해에 1% 이상 영향을 주는 것이 없어요.</div>' : "";
-  P.innerHTML = h + minor + `<div id="fillBox" style="margin-top:10px"><div class="small">조건을 충족하면 얼마나 오르는지, 충족시키는 방법을 찾는 중…</div></div>`;
+  P.innerHTML = `<div id="mdTop"></div>` + h + minor + `<div id="mdCond" style="margin-top:10px"></div><div id="fillBox" style="margin-top:10px"><div class="small">조건을 충족하면 얼마나 오르는지, 충족시키는 방법을 찾는 중…</div></div>`;
+  $("#mdTop").innerHTML = '<div class="small" style="margin-bottom:6px">PoB 계산 안에서 조건별로 켜지는 효과, 피해 공식, 스택 곡선, 더 키우는 방법을 뽑는 중… (20초 정도)</div>';
+  const D = await ensureMechDetail();
+  if (tab !== "mech" || !$("#mdTop")) return;
+  if (D) renderMechDetail(P, M, D);
   renderFill();
 }
 // Conditions the build's own cards ask for but is not getting (or only gets because PoB's setting says so):
@@ -1634,6 +1638,186 @@ async function renderFill() {
     const it = W[+b.dataset.fadd];
     prev = S.stats;
     const ops = it.nodeId ? { addNodes: [it.nodeId] } : it.unique ? { equip: [{ slot: it.slot, unique: it.unique }] } : it.gemName ? { addGem: { name: it.gemName, group: it.group } } : { addGroup: it.addGroup };
+    const snap0 = snapIds();
+    const r = await api({ op: "apply", ...ops });
+    if (r.ok) { S = r.state; await syncConfig(); markNew(snap0); }
+  }));
+}
+// ------------------------------------------------------------------ mechanics in detail
+// Straight from PoB's calculation: which lines of the hit formula each condition switches, every mod that refers
+// to it, damage at each stack count, where its maximum comes from, and passives / uniques whose parsed mods
+// would push it further.
+let MDET = null;
+const MODKO = { Damage: "피해", PhysicalDamage: "물리 피해", ColdDamage: "냉기 피해", FireDamage: "화염 피해", LightningDamage: "번개 피해", ChaosDamage: "카오스 피해", ElementalDamage: "원소 피해",
+  CritChance: "치명타 확률", CritMultiplier: "치명타 피해 보너스", Speed: "공격·시전 속도", ProjectileCount: "투사체 수", ElementalPenetration: "원소 저항 관통", ColdPenetration: "냉기 저항 관통",
+  FirePenetration: "화염 저항 관통", LightningPenetration: "번개 저항 관통", ChaosPenetration: "카오스 저항 관통", PowerChargesMax: "최대 권능 충전", FrenzyChargesMax: "최대 격분 충전",
+  EnduranceChargesMax: "최대 인내 충전", MaximumRage: "최대 격노", RageEffect: "격노 효과", Evasion: "회피", Armour: "방어도", MovementSpeed: "이동 속도", Duration: "지속시간", Accuracy: "명중",
+  DamageTaken: "받는 피해", ActionSpeed: "행동 속도", LifeDegenPercent: "초당 생명력 손실", FlaskEffect: "플라스크 효과", FlaskChargesGained: "플라스크 충전 획득", LifeRecoveryRate: "생명력 회복 속도",
+  StunThreshold: "기절 한계치", RemnantEffect: "잔재 효과", AreaOfEffect: "효과 범위", Life: "생명력", EnergyShield: "에너지 보호막", Mana: "마나", ElementalResist: "원소 저항",
+  AdditionalFlickersPerPowerCharge: "권능 충전당 추가 점멸", ChaosDegen: "초당 카오스 피해", LifeRegen: "생명력 재생", ManaRegen: "마나 재생", DeflectionRating: "굴절 등급",
+  EnergyShieldRecoveryRate: "에너지 보호막 회복 속도", StunImmune: "기절 면역", ManaCost: "마나 소모", Withered: "위축", ChillEffect: "냉각 효과", ShockEffect: "감전 효과", IgniteEffect: "점화 효과", ChargedStaffBuffDuration: "충전 지팡이 버프 지속", WarcrySpeed: "함성 속도", TotemPlacementSpeed: "토템 설치 속도", CooldownRecovery: "재사용 대기시간 회복" };
+const DTKO = { Physical: "물리", Cold: "냉기", Fire: "화염", Lightning: "번개", Chaos: "카오스", Elemental: "원소", Random: "무작위 원소", "": "" };
+const VARKO = { RemovablePowerCharge: "소모 가능한 권능 충전", RemovableFrenzyCharge: "소모 가능한 격분 충전", RemovableEnduranceCharge: "소모 가능한 인내 충전", TotalCharges: "모든 충전 합계",
+  RemovableTotalCharges: "소모 가능한 충전 합계", RageStack: "격노 설정값", CanGainRage: "격노 획득 가능", BeenHitRecently: "최근 피격", CritRecently: "최근 치명타", MainHandAttack: "주 무기 공격",
+  WeaponSet1: "무기 세트 1 사용 중", WeaponSet2: "무기 세트 2 사용 중", Combat: "전투 중", FrozenEnemyRecently: "최근 적 동결", ComboStacks: "연계", KilledRecently: "최근 처치", BannerPlanted: "깃발 설치",
+  AffectedByChargedStaff: "충전 지팡이 영향", BuffOnSelf: "자신에게 걸린 버프 수", GainedPowerChargeRecently: "최근 권능 충전 획득", KilledShockedLast3Seconds: "3초 안에 감전된 적 처치",
+  AffectedByGloriousMadness: "영광스러운 광기 영향", enemyDistance: "적과의 거리", FaerieFireStack: "요정불 중첩", FrenzyCharges: "격분 충전 수", PowerCharges: "권능 충전 수", EnduranceCharges: "인내 충전 수",
+  Blinded: "실명", LowLife: "낮은 생명력", CritInPast8Sec: "최근 8초 안에 치명타", WitheredStack: "위축 중첩", ElementalConfluxColdEffect: "원소 융합 냉기 효과",
+  ElementalConfluxFireEffect: "원소 융합 화염 효과", ElementalConfluxLightningEffect: "원소 융합 번개 효과", RunesSocketedInBodyArmour: "갑옷에 박힌 룬", IgnoreMovementPenalties: "이동 페널티 무시",
+  WindDancerStacks: "바람 춤꾼 중첩", Mana: "마나", Life: "생명력", EnergyShield: "에너지 보호막", UsingFocus: "집중구 사용 중", NoRunicWard: "룬 수호 없음",
+  SigilOfPowerStage: "힘의 부적 단계", CorruptedItem: "타락한 아이템", FaerieFireStacks: "요정불 중첩", Dex: "민첩", Str: "힘", Int: "지능", Sprinting: "달리기", Herald: "전령", FullLife: "생명력 최대", UsingFlask: "플라스크 사용 중", Moving: "이동 중", Stationary: "정지 중", OnConsecratedGround: "신성화된 땅 위" };
+function VK(v) {
+  if (v == null) return "";
+  if (VARKO[v]) return VARKO[v];
+  if (KO.ports[v]) return KO.ports[v];
+  if (KO.ports["enemy:" + v]) return KO.ports["enemy:" + v];
+  const h = /^AffectedBy(.+)$/.exec(v); if (h) return T(h[1].replace(/of([A-Z])/g, " of $1").replace(/([a-z])([A-Z])/g, "$1 $2")) + " 영향";
+  const m = /^(.+)Stacks?$/.exec(v); if (m && KO.ports[m[1]]) return KO.ports[m[1]] + " 중첩";
+  return v.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+function modKo(name) {
+  if (MODKO[name]) return MODKO[name];
+  let m = /^(\w*?)DamageGainAs(\w+)$/.exec(name); if (m) return `${DTKO[m[1]] ?? m[1]} 피해의 일부를 ${DTKO[m[2]] ?? m[2]} 피해로 추가 획득`;
+  m = /^(\w*?)DamageConvertTo(\w+)$/.exec(name); if (m) return `${DTKO[m[1]] ?? m[1]} 피해를 ${DTKO[m[2]] ?? m[2]} 피해로 전환`;
+  m = /^(Physical|Cold|Fire|Lightning|Chaos)(Min|Max)$/.exec(name); if (m) return `${DTKO[m[1]]} 피해 ${m[2] === "Min" ? "최소" : "최대"}`;
+  m = /^Multiplier:(\w+)$/.exec(name); if (m) return VK(m[1]) + " 수치";
+  m = /^Condition:(\w+)$/.exec(name); if (m) return VK(m[1]) + " 상태";
+  return name.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+function tagKo(t) {
+  const nv = t.neg ? "이 아닐 때" : "일 때";
+  switch (t.type) {
+    case "Condition": return `${VK(t.var || (t.varList || []).join("/"))}${nv}`;
+    case "ActorCondition": return `${t.actor === "enemy" ? "적이 " : t.actor ? t.actor + " " : ""}${VK(t.var || (t.varList || []).join("/"))}${nv}`;
+    case "Multiplier": return `${VK(t.var || (t.varList || []).join("+"))} ${t.div && t.div !== 1 ? t.div + "개" : "1개"}당${t.limit ? ` (최대 ${t.limit})` : ""}`;
+    case "MultiplierThreshold": return `${VK(t.var || (t.varList || []).join("+"))} ${t.threshold ?? "?"}${t.upper ? " 이하" : " 이상"}일 때`;
+    case "StatThreshold": return `${VK(t.stat)} ${t.threshold ?? "?"}${t.upper ? " 이하" : " 이상"}일 때`;
+    case "PerStat": return `${VK(t.stat)} ${t.div || 1}당`;
+    case "SkillName": return `${T(t.skillName || "")} 스킬`;
+    case "SkillType": return "특정 유형 스킬";
+    default: return "";
+  }
+}
+function srcKo(s) {
+  if (!s) return "";
+  if (s.kind === "Tree" && s.id) return NN(s.id, s.name);
+  if (s.kind === "Item") return T(short(s.name));
+  if (s.kind === "Skill") return T(s.name);
+  if (s.kind === "Base") return "기본";
+  if (s.kind === "Config") return "PoB 설정";
+  return T(s.name || s.raw || "");
+}
+function fmtV(v) { return v == null ? "?" : Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : (Math.round(v * 100) / 100).toString(); }
+function lineKo(x, val) {
+  const v = val !== undefined ? val : (x.value ?? x.base);
+  const nm = modKo(x.name);
+  let body;
+  if (x.type === "INC") body = `${nm} ${fmtV(Math.abs(v))}% ${v < 0 ? "감소" : "증가"}`;
+  else if (x.type === "MORE") body = `${nm} ${fmtV(Math.abs(v))}% ${v < 0 ? "감폭" : "증폭"}`;
+  else if (x.type === "BASE") body = /GainAs|ConvertTo/.test(x.name) ? `${nm} ${fmtV(v)}%` : `${nm} ${v > 0 ? "+" : ""}${fmtV(v)}`;
+  else if (x.type === "FLAG") body = `${nm} 적용`;
+  else if (x.type === "OVERRIDE") body = `${nm} = ${fmtV(v)}`;
+  else body = `${nm} ${fmtV(v)}`;
+  const tg = (x.tags || []).map(tagKo).filter(Boolean);
+  return { body, tags: tg.join(", "), src: srcKo(x.src) };
+}
+function lineHtml(x, extra) {
+  const L = lineKo(x);
+  return `<div class="s" style="margin-left:8px">· <b>${esc(L.src)}</b>: ${esc(L.body)}${L.tags ? ` <span class="small" style="color:var(--dim)">[${esc(L.tags)}]</span>` : ""}${extra || ""}</div>`;
+}
+async function ensureMechDetail() {
+  const M = await ensureMech();
+  if (!M) return null;
+  if (MDET && MDET.key === M.key) return MDET;
+  const conds = M.mechs.map((m) => ({ key: m.key, config: m.config }));
+  const curves = M.mechs.filter((m) => m.dpsPct <= -1).map((m) => m.key).filter((k) => ["PowerCharge", "FrenzyCharge", "EnduranceCharge", "Rage"].includes(k));
+  const r = await api({ op: "mechDetail", conds, curves, expand: true }, true);
+  if (!r.ok) return null;
+  MDET = { key: M.key, ...r };
+  return MDET;
+}
+const SLOTK = { Helmet: "투구", "Body Armour": "갑옷", Gloves: "장갑", Boots: "장화", Amulet: "목걸이", "Ring 1": "반지 1", "Ring 2": "반지 2", Belt: "허리띠", "Weapon 1": "무기 1", "Weapon 2": "무기 2" };
+const FGRP = { incDamage: ["피해 증가 합계", (t) => `+${fmtV(t)}%`], moreDamage: ["피해 증폭 곱", (t) => `×${t.toFixed(2)}`], critChanceBase: ["기본 치명타 확률", (t) => `${fmtV(t)}%`],
+  critChance: ["치명타 확률 증가 합계", (t) => `+${fmtV(t)}%`], critMulti: ["기본 치명타 피해 보너스", (t) => `+${fmtV(t)}%`], critMultiInc: ["치명타 피해 보너스 증가 합계", (t) => `+${fmtV(t)}%`],
+  speed: ["속도 증가 합계", (t) => `+${fmtV(t)}%`], speedMore: ["속도 증폭 곱", (t) => `×${t.toFixed(2)}`], pen: ["저항 관통 합계", (t) => `${fmtV(t)}%`], projectiles: ["추가 투사체", (t) => `+${fmtV(t)}`], conversion: ["피해 추가 획득·전환", () => ""] };
+function renderMechDetail(P, M, D) {
+  const f = (v) => (v == null ? "-" : (v > 0 ? "+" : "") + (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1)) + "%");
+  const W = [];
+  // ---- hit formula
+  const o = D.out || {};
+  const hitTot = Object.values(D.hit || {}).reduce((a, b) => a + b, 0);
+  let top = `<div class="item"><div class="n">피해 공식 분해 <span class="small">(${esc(T((D.skill || {}).name || ""))}, PoB 계산 줄 그대로)</span></div>
+    <div class="small">한 번 명중 평균 ${fmtV(o.AverageHit)} · 치명타 ${fmtV(o.CritChance)}% × ${fmtV(o.CritMultiplier)}배 · 초당 ${fmtV(o.Speed)}회${o.ProjectileCount > 1 ? ` · 투사체 ${o.ProjectileCount}개` : ""}${hitTot ? " · " + Object.entries(D.hit).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${DTKO[k]} ${Math.round(v / hitTot * 100)}%`).join(" ") : ""}</div>
+    <div class="small" style="color:var(--dim);margin-top:2px">줄마다 괄호 속 숫자는 그 한 줄만 빼면 해당 부분이 대략 얼마 줄어드는지예요 (다른 줄은 그대로 둔 근사치).</div>`;
+  (D.formula || []).forEach((g) => {
+    if (!g.rows || !g.rows.length) return;
+    const lab = FGRP[g.key] || [g.key, () => ""];
+    const rows = g.rows.slice(0, 8).map((x) => lineHtml(x, x.worth != null && Math.abs(x.worth) >= 0.05 ? ` <span class="chip down">${f(x.worth)}</span>` : "")).join("");
+    const more = g.rows.length > 8 ? `<details><summary class="small">나머지 ${g.rows.length - 8}줄</summary>${g.rows.slice(8).map((x) => lineHtml(x, x.worth != null && Math.abs(x.worth) >= 0.05 ? ` <span class="small">(${f(x.worth)})</span>` : "")).join("")}</details>` : "";
+    top += `<details ${g.key === "incDamage" || g.key === "moreDamage" ? "open" : ""} style="margin-top:4px"><summary class="s"><b>${lab[0]}</b> ${g.total != null ? lab[1](g.total) : ""} <span class="small">(${g.rows.length}줄)</span></summary>${rows}${more}</details>`;
+  });
+  top += `</div>`;
+  $("#mdTop").innerHTML = top;
+  // ---- per mechanic
+  const RK = { PowerCharge: "PowerChargesMax", FrenzyCharge: "FrenzyChargesMax", EnduranceCharge: "EnduranceChargesMax", Rage: "MaximumRage" };
+  (D.mechs || []).forEach((dm) => {
+    const box = P.querySelector(`.item[data-mk="${CSS.escape(dm.key)}"] .mdx`);
+    if (!box) return;
+    let h = "";
+    const ch = (dm.changed || []).filter((c) => !/^Removable/.test(c.var) || dm.changed.length < 6);
+    if (ch.length) h += `<div class="s" style="margin-top:4px"><b>PoB 안에서 바뀌는 값</b> ${esc(ch.map((c) => `${c.actor === "enemy" ? "적 " : ""}${VK(c.var)} ${c.on === true ? "켜짐" : fmtV(c.on)} → ${c.off == null || c.off === false ? (c.kind === "condition" ? "꺼짐" : "0") : fmtV(c.off)}`).join(" · "))}</div>`;
+    if ((dm.lost || []).length) h += `<div class="s" style="margin-top:4px"><b>이 조건으로 켜지는 피해 공식 줄</b> <span class="small">(꺼지면 사라지거나 줄어드는 것)</span></div>` + dm.lost.slice(0, 12).map((x) => lineHtml(x, ` <span class="small">→ 꺼지면 ${esc(lineKo(x, x.offValue).body)}</span>`)).join("");
+    const lostKey = new Set((dm.lost || []).map((x) => x.src.raw + x.name + x.base));
+    const refs = (dm.mods || []).filter((x) => !lostKey.has(x.src.raw + x.name + x.base) && x.src.kind !== "Config");
+    if (refs.length) h += `<details style="margin-top:4px"><summary class="s"><b>이 조건을 참조하는 효과 전체</b> ${refs.length}줄 <span class="small">(피해 외 효과·지금 안 켜진 것 포함)</span></summary>` + refs.slice(0, 40).map((x) => lineHtml(x, x.active ? "" : ` <span class="small" style="color:#e5b94e">지금 안 켜짐</span>`)).join("") + `</details>`;
+    const cv = (D.curves || {})[dm.key];
+    if (cv && cv.points && cv.points.length > 1) {
+      const pts = cv.points, lo = Math.min(...pts.map((p) => p.dpsPct ?? 0));
+      const bars = pts.map((p) => { const w = lo < 0 ? Math.round(100 * (1 - (p.dpsPct ?? 0) / lo)) : 100; return `<div class="small" style="display:flex;align-items:center;gap:4px"><span style="width:28px;text-align:right">${p.n}</span><span style="display:inline-block;height:8px;width:${Math.max(2, w * 1.4)}px;background:var(--accent,#5fb3b3);border-radius:3px"></span><span>${f(p.dpsPct)}</span></div>`; }).join("");
+      const steps = pts.slice(1).map((p, i) => ({ n: p.n, d: (p.dpsPct ?? 0) - (pts[i].dpsPct ?? 0), per: ((p.dpsPct ?? 0) - (pts[i].dpsPct ?? 0)) / Math.max(1, p.n - pts[i].n) }));
+      const avg = steps.reduce((a, b) => a + b.per, 0) / steps.length;
+      const jumps = steps.filter((x) => x.per > avg * 2.5 && x.d > 3);
+      const last = steps[steps.length - 1];
+      h += `<div class="s" style="margin-top:4px"><b>개수별 피해</b> <span class="small">(지금 피해 대비, 최대 ${cv.max})</span></div>${bars}
+        <div class="small" style="margin-left:8px">마지막 1개의 가치 ≈ ${f(last.per)}${last.per > 0.5 ? " → 최대치를 늘리면 비슷하게 더 오를 가능성이 커요" : ""}${jumps.length ? ` · 임계점: ${jumps.map((j) => `${j.n}개 근처에서 ${f(j.d)} 급증`).join(", ")} (조건부 효과가 이 개수에서 켜짐)` : ""}</div>`;
+    }
+    const ms = (D.maxSrc || {})[RK[dm.key]];
+    if (ms && ms.length) h += `<div class="s" style="margin-top:4px"><b>최대치 출처</b> ${esc(ms.map((x) => `${srcKo(x.src)} ${x.value > 0 ? "+" : ""}${fmtV(x.value)}`).join(", "))}</div>`;
+    const ex = ((D.expand || {})[dm.key] || []).filter((x) => x.pv && x.pv.ok).sort((a, b) => ((b.pv.problems ? -1e6 : 0) + (b.pv.dpsPct ?? -1e9) / Math.sqrt(Math.max(1, b.pv.points || 1))) - ((a.pv.problems ? -1e6 : 0) + (a.pv.dpsPct ?? -1e9) / Math.sqrt(Math.max(1, a.pv.points || 1))));
+    if (ex.length) {
+      h += `<div class="s" style="margin-top:4px"><b>더 키우는 방법</b> <span class="small">(빌드 밖 패시브·고유 중 PoB가 해석한 효과가 이 메커니즘의 최대치를 올리거나 이 조건에 묶인 것${dm.key === "Rage" ? ", 격노는 가득 유지한다고 가정" : ""})</span></div>` + ex.slice(0, 8).map((x) => {
+        const i = W.push(x) - 1, pv = x.pv;
+        const why = (x.mods || []).slice(0, 3).map((y) => lineKo(y).body + (lineKo(y).tags ? ` [${lineKo(y).tags}]` : "")).join(" · ");
+        const nm = x.kind === "unique" ? T(short(x.name)) : NN(x.id, x.name);
+        return `<div class="t" style="margin:3px 0 0 8px"><span><span class="n">${esc(nm)}</span> <span class="kind" style="background:var(${KCOL[x.kind] || "--dim"})">${KNAME[x.kind] || x.kind}</span>
+          <span class="small">${pv.dpsPct != null ? `<span class="chip ${pv.dpsPct > 0.05 ? "up" : pv.dpsPct < -0.05 ? "down" : ""}">피해 ${f(pv.dpsPct)}</span>` : ""}${pv.ehpPct != null && Math.abs(pv.ehpPct) >= 0.5 ? ` <span class="chip ${pv.ehpPct > 0 ? "up" : "down"}">생존 ${f(pv.ehpPct)}</span>` : ""}${pv.points ? ` ${pv.points}포인트` : x.slot ? ` ${esc(SLOTK[x.slot] || x.slot)} 교체` : ""}</span>
+          <div class="small" style="color:var(--dim)">${esc(why)}</div>${probHtml(pv)}</span><button data-xadd="${i}">추가</button></div>`;
+      }).join("");
+    }
+    box.innerHTML = h;
+  });
+  // ---- every conditional effect in the build, grouped by what it waits for
+  const groups = {};
+  D.cond = (D.cond || []).filter((x) => x.src && ["Tree", "Item", "Skill"].includes(x.src.kind));
+  (D.cond || []).forEach((x) => {
+    const g = (x.tags || []).find((t) => ["Condition", "ActorCondition", "MultiplierThreshold", "StatThreshold", "Multiplier", "PerStat"].includes(t.type));
+    const k = g ? tagKo(g) : "기타";
+    (groups[k] = groups[k] || { on: [], off: [] })[x.active ? "on" : "off"].push(x);
+  });
+  const ents = Object.entries(groups).sort((a, b) => b[1].off.length - a[1].off.length || b[1].on.length - a[1].on.length);
+  const offN = (D.cond || []).filter((x) => !x.active).length;
+  let ch = `<div class="item"><div class="n">빌드 안의 조건부 효과 전체 <span class="small">(${(D.cond || []).length}줄, 그중 지금 꺼진 것 ${offN}줄)</span></div>
+    <div class="small">빌드의 노드·장비·젬이 가진 "~일 때 / ~당" 효과를 PoB가 해석한 그대로 조건별로 묶었어요. 꺼진 줄은 조건만 맞추면 얻는 효과예요.</div>`;
+  ents.forEach(([k, g]) => {
+    ch += `<details ${g.off.length ? "open" : ""} style="margin-top:4px"><summary class="s"><b>${esc(k)}</b> <span class="small">켜짐 ${g.on.length} · 꺼짐 ${g.off.length}</span></summary>` +
+      g.off.map((x) => lineHtml(x, ` <span class="small" style="color:#e5b94e">꺼짐</span>`)).join("") + g.on.map((x) => lineHtml(x)).join("") + `</details>`;
+  });
+  ch += `</div>`;
+  $("#mdCond").innerHTML = ch;
+  P.querySelectorAll("button[data-xadd]").forEach((b) => b.addEventListener("click", async () => {
+    const x = W[+b.dataset.xadd];
+    prev = S.stats;
+    const ops = x.kind === "unique" ? { equip: [{ slot: x.slot, unique: x.name }] } : { addNodes: [x.id] };
     const snap0 = snapIds();
     const r = await api({ op: "apply", ...ops });
     if (r.ok) { S = r.state; await syncConfig(); markNew(snap0); }
