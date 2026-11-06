@@ -49,6 +49,9 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card.off { opacity: .4; }
 .card.sel { outline: 3px solid #ff5a3d; outline-offset: 1px; }
 .card.dim { opacity: .28; }
+.card.newc { box-shadow: 0 0 0 3px #3dff9a, 0 0 18px 4px rgba(61,255,154,.55); }
+.card.newc .h::after { content: "새로"; font-size: 10px; font-weight: 700; color: #0b2; background: #3dff9a; color: #062; border-radius: 6px; padding: 0 5px; margin-left: 4px; }
+.sgem.newc { background: rgba(61,255,154,.18); box-shadow: inset 3px 0 0 #3dff9a; }
 .prob { color: #ff7a6b; font-size: 11px; margin-top: 3px; }
 .item.bad { opacity: .55; }
 .colh { position: absolute; white-space: nowrap; font-size: 13px; font-weight: 700; color: #cfd6df; cursor: pointer; user-select: none; padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,.06); }
@@ -221,10 +224,11 @@ function renderStats() {
     const d1 = pct(v, p), d0 = pct(v, b);
     const cls = (d) => d > 0.05 ? "up" : d < -0.05 ? "down" : "";
     const sgn = (d) => (d > 0 ? "+" : "") + d.toFixed(1) + "%";
-    return `<div class="stat"><div class="k">${k}</div><div class="v">${show ? show(s) : fmt(v)}</div>
+    return `<div class="stat" ${k === "주 스킬 초당 피해" ? 'data-why="1" title="누르면 이 숫자가 왜 나왔는지 보여 줍니다" style="cursor:pointer"' : ""}><div class="k">${k}</div><div class="v">${show ? show(s) : fmt(v)}</div>
       <div class="d"><span class="${cls(d1)}" title="방금 바꾼 것">${d1 != null && Math.abs(d1) > 0.05 ? sgn(d1) : ""}</span>
       <span class="${cls(d0)} small" title="불러온 빌드 대비">${d0 != null && Math.abs(d0) > 0.05 ? " 원본 " + sgn(d0) : ""}</span></div></div>`;
   }).join("");
+  const w = $("#stats").querySelector("[data-why]"); if (w) w.addEventListener("click", () => setTab("why"));
 }
 
 // ------------------------------------------------------------------ cards from state
@@ -430,9 +434,17 @@ function layout(list) {
   let y = 20;
   const sit = list.find((c) => c.kind === "situation");
   if (sit) { def[sit.key] = { x: 20, y }; y += cardH(sit) + 40; }
+  // who works with whom: mechanic links, plus "changes the main skill's damage" for stat-only cards
+  const links = linkPairs(list);
+  const nb = new Map();
+  const host = (k) => EMB[k] || k;
+  links.forEach(([a, b]) => { a = host(a); b = host(b); if (a === b) return; (nb.get(a) || nb.set(a, []).get(a)).push(b); (nb.get(b) || nb.set(b, []).get(b)).push(a); });
   const groups = new Map();
   list.forEach((c) => { if (c.gem) { const g = c.gem.group; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(c); } });
-  groups.forEach((cs) => {
+  // main skill group first, then the groups with the most links
+  const gdeg = (cs) => cs.reduce((n, c) => n + (nb.get(c.key) || []).length, 0);
+  const gorder = [...groups.entries()].sort((a, b) => (b[0] === S.mainGroup) - (a[0] === S.mainGroup) || gdeg(b[1]) - gdeg(a[1]));
+  gorder.forEach(([, cs]) => {
     let ly = y, ry = y;
     const placed = new Set();
     cs.filter((c) => c.kind === "skill").forEach((sk) => {
@@ -448,10 +460,38 @@ function layout(list) {
   // a folded column lists its cards by how much the build loses without them
   const worth = (c) => { const x = CONTRIB[c.key]; return x ? Math.min(x.dpsPct ?? 0, (x.ehpPct ?? 0) / 2) : 0; };
   const idx0 = new Map(list.map((c, i) => [c.key, i]));
-  const order = list.slice().sort((a, b) => (a.col - b.col) || (COLL.has(a.col) ? worth(a) - worth(b) : 0) || idx0.get(a.key) - idx0.get(b.key));
-  order.forEach((c) => { if (def[c.key] || !colX[c.col]) return; def[c.key] = { x: colX[c.col], y: colY[c.col] }; colY[c.col] += cardH(c) + (isColl(c) ? 6 : 18); });
+  const mainSk = list.find((c) => c.kind === "skill" && c.gem && c.gem.group === S.mainGroup);
+  const mainY = mainSk && def[mainSk.key] ? def[mainSk.key].y : 50;
+  // each card wants to sit at the average height of the cards it works with (columns filled left to right,
+  // so passives also follow the items placed before them); cards with no link but a damage effect go next to the main skill
+  const target = (c) => {
+    const ys = (nb.get(c.key) || []).map((k) => def[k] && def[k].y).filter((v) => v != null);
+    if (ys.length) return ys.reduce((a, b) => a + b, 0) / ys.length;
+    const x = CONTRIB[c.key];
+    if (x && Math.abs(x.dpsPct ?? 0) >= 0.5) return mainY + 60 + Math.max(0, 40 + (x.dpsPct ?? 0)) * 4;
+    return 1e7 - worthAbs(c);
+  };
+  const worthAbs = (c) => { const x = CONTRIB[c.key]; return x ? Math.abs(x.dpsPct ?? 0) + Math.abs(x.ehpPct ?? 0) : 0; };
+  [2, 3, 4, 5].forEach((col) => {
+    const cs = list.filter((c) => c.col === col && !def[c.key]);
+    const t = new Map(cs.map((c) => [c.key, COLL.has(col) ? worth(c) : target(c)]));
+    cs.sort((a, b) => t.get(a.key) - t.get(b.key) || idx0.get(a.key) - idx0.get(b.key));
+    cs.forEach((c) => {
+      const want = COLL.has(col) || t.get(c.key) >= 1e6 ? colY[col] : Math.max(colY[col], t.get(c.key) - 10);
+      def[c.key] = { x: colX[col], y: want };
+      colY[col] = want + cardH(c) + (isColl(c) ? 6 : 18);
+    });
+  });
   pos = {};
   list.forEach((c) => { pos[c.key] = dragged[c.key] || def[c.key] || { x: 20, y }; });
+}
+// pairs of cards joined by a mechanic link (same rules as the wires)
+function linkPairs(list) {
+  const out = [];
+  list.forEach((a) => { if (!a.off && a.ent) portsOf(a).outs.forEach((pn) => list.forEach((b) => {
+    if (b !== a && !b.off && b.ent && portsOf(b).ins.includes(pn) && linkOK(a, b, pn) && (EMB[a.key] || a.key) !== (EMB[b.key] || b.key)) out.push([a.key, b.key, pn]);
+  })); });
+  return out;
 }
 // cubic bezier point + tangent at t, for the flow arrow in the middle of each wire
 function bez(s, c1, c2, t, u) {
@@ -490,7 +530,7 @@ function render() {
   const has = (c) => { const p = portsOf(c); return p.ins.length || p.outs.length || (c.kind !== "global" && c.ent && (c.ent.st || []).length && $("#showStats").checked); };
   const liveGroups = new Set(all.filter((c) => c.gem && has(c)).map((c) => c.gem.group));
   if (S) liveGroups.add(S.mainGroup);
-  const list = hide ? all.filter((c) => has(c) || c.ghost || c.key === selected || (c.gem && liveGroups.has(c.gem.group))) : all;
+  const list = hide ? all.filter((c) => has(c) || c.ghost || NEWC.has(ident(c)) || c.key === selected || (c.gem && liveGroups.has(c.gem.group))) : all;
   const hiddenN = all.length - list.length;
   buildSockets(list);
   layout(list);
@@ -505,6 +545,10 @@ function render() {
     const seeds = [selected, ...(SOCK[selected] || []).map((g) => g.key)];
     const walk = (from, to) => { const seen = new Set(seeds), q = [...seeds]; while (q.length) { const k = q.shift(); links.forEach((l) => { if (l[from] === k && !seen.has(l[to])) { seen.add(l[to]); q.push(l[to]); } }); } return seen; };
     FOCUS = new Set([...walk(0, 1), ...walk(1, 0)]);
+    // the main skill also lights every card PoB says changes its damage (stat cards have no wires)
+    const selC = list.find((c) => c.key === selected);
+    const selG = selC && selC.gem ? selC.gem.group : null;
+    if (selG === S.mainGroup) list.forEach((c) => { const x = CONTRIB[c.key]; if (x && Math.abs(x.dpsPct ?? 0) >= 0.5) FOCUS.add(c.key); });
   }
   const ps = portState(list);
   const world = $("#world");
@@ -560,7 +604,7 @@ function render() {
           if (a) inner += `<span class="pl" data-port="${a}" data-dir="in" style="top:${ty}px;line-height:${SROW}px;color:${PC(a)}" title="${esc(TL(g.ent.ev["in:" + a] || ""))}">${esc(PN(a))}</span>`;
           if (b) inner += `<span class="pr" data-port="${b}" data-dir="out" style="top:${ty}px;line-height:${SROW}px;color:${PC(b)}" title="${esc(TL(g.ent.ev["out:" + b] || ""))}">${esc(PN(b))}</span>`;
         }
-        sockHtml += `<div class="sgem ${g.off ? "off" : ""} ${selected === g.key ? "selg" : ""}" style="height:${H}px">${inner}</div>`;
+        sockHtml += `<div class="sgem ${g.off ? "off" : ""} ${selected === g.key ? "selg" : ""} ${NEWC.has(ident(g)) ? "newc" : ""}" data-newk="${esc(ident(g))}" style="height:${H}px">${inner}</div>`;
         const HH = H;
         gp.ins.forEach((pn, r) => {
           const d = document.createElement("div"), local = isLocal(g, pn), missing = local ? false : !ps.prod[pn];
@@ -582,6 +626,7 @@ function render() {
       sockHtml += `</div>`;
     }
     if (coll) el.classList.add("fold");
+    if (NEWC.has(ident(c))) { el.classList.add("newc"); el.addEventListener("mouseenter", () => { NEWC.delete(ident(c)); el.classList.remove("newc"); }, { once: true }); }
     const stl = stLine(c) ? `<div class="stl" title="${esc(c.ent.st.map(PN).join(', '))}">능력치: ${esc(c.ent.st.map(PN).join(' · '))}</div>` : "";
     el.innerHTML = head + sockHtml + `<div class="ports">${rowsHtml}</div>` + stl + el.innerHTML;
     if (FOCUS) el.classList.add(FOCUS.has(c.key) || (SOCK[c.key] || []).some((g) => FOCUS.has(g.key)) ? "hl" : "dim");
@@ -611,6 +656,7 @@ function render() {
     });
     // socket link pins: support pill -> skill node (white exec-style)
     if (st.pill) exec[c.key + "|out"] = { x: p.x + st.w, y: p.y + st.head / 2 };
+    el.querySelectorAll(".sgem.newc").forEach((r) => r.addEventListener("mouseenter", () => { NEWC.delete(r.dataset.newk); r.classList.remove("newc"); }, { once: true }));
     el.addEventListener("mousedown", (ev) => dragCard(ev, c, el));
     el.addEventListener("click", (ev) => {
       const a = ev.target.dataset.a;
@@ -662,7 +708,8 @@ function render() {
     const hotE = FOCUS && !statSel && FOCUS.has(a.key) && FOCUS.has(b.key);
     if (FOCUS) op = hotE ? 1 : 0.04;
     else if (!bright && !key && !inCycle) op = ps.active[pn] ? 0.16 : 0.08;
-    paths += wire(s, t, PC(pn), { on: ps.active[pn], op, w: hotE || inCycle ? 3 : guess ? 1.5 : 2, glow: inCycle || hotE, port: pn, dash: guess ? "2 4" : null,
+    const unmet = hotE && !ps.active[pn];
+    paths += wire(s, t, unmet ? "#ff4d4d" : PC(pn), { on: ps.active[pn], op, w: hotE || inCycle ? 3 : guess ? 1.5 : 2, glow: inCycle || (hotE && !unmet), port: pn, dash: unmet ? "5 4" : guess ? "2 4" : null,
       title: `${PN(pn)}: ${a.name} → ${b.name}${inCycle ? " (순환 고리)" : ""}${guess ? " (추정: PoB가 해석하지 못한 문장에서 읽음)" : ""} — 누르면 ${ps.active[pn] ? "끊기" : "잇기"}` });
   });
   svg.innerHTML = paths;
@@ -697,6 +744,11 @@ function scheduleContrib(list) {
     render();
   }, 400);
 }
+// what changed: cards that appeared after an optimisation or an add glow until the mouse has been over them once
+let NEWC = new Set();
+const ident = (c) => c.gem ? `gem:${c.gem.group}:${c.gem.idx}:${c.en}` : c.node ? "node:" + c.node.id : c.slot ? `item:${c.slot}:${c.en}` : c.key;
+const snapIds = () => new Set(cards().filter((c) => !c.off && !c.virtual).map(ident));
+function markNew(snap) { cards().forEach((c) => { if (!c.virtual && !c.off && !snap.has(ident(c))) NEWC.add(ident(c)); }); render(); }
 // real-game limits PoB reports for a candidate (spirit, attributes, full support sockets)
 const probHtml = (x) => x && x.problems && x.problems.length ? `<div class="prob">⚠ 실제로는 불가: ${esc(x.problems.join(", "))}</div>` : "";
 function cbadge(c) {
@@ -795,6 +847,23 @@ function showDetail(c) {
     const [dir, ...rest] = k.split(":"); const p = rest.join(":");
     if (G.ports[p]) h += `<div class="s"><b>${dir === "in" ? "입력" : "출력"} ${esc(PN(p))}</b>: ${esc(TL(v))}</div>`;
   });
+  // ② conditions this card needs: who makes them, and whether PoB counts them right now
+  if (e && S) {
+    const ps = portState(cards());
+    // a skill card also needs whatever its socketed supports need
+    const need = [...new Set([c, ...(SOCK[c.key] || [])].filter((x) => !x.off).flatMap((x) => portsOf(x).ins || []))].filter((p) => G.ports[p] && !p.startsWith("stat:"));
+    if (need.length) {
+      h += `<div class="s" style="margin-top:6px"><b>필요한 조건</b></div>`;
+      need.forEach((p) => {
+        const mk = [...new Set((ps.prod[p] || []).filter((x) => x.key !== c.key).map((x) => x.name))];
+        const on = ps.active[p];
+        const local = isLocal(c, p);
+        const st = local ? "이 스킬 자신이 만듦" : mk.length && on ? "충족: " + mk.slice(0, 3).join(", ") + (mk.length > 3 ? ` 외 ${mk.length - 3}` : "")
+          : mk.length ? "⚠ 만드는 카드는 있지만 계산에서 꺼짐" : on ? "⚠ 만드는 카드 없음: PoB 설정으로만 켜져 있음" : "⚠ 미충족: 만드는 카드 없음";
+        h += `<div class="s" style="color:${st.startsWith("⚠") ? "#ff8a7a" : "#9fd8a8"}">${esc(PN(p))}: ${esc(st)}</div>`;
+      });
+    }
+  }
   $("#detail").innerHTML = h + "</div>";
 }
 
@@ -918,8 +987,9 @@ function bindAdd() {
     else if (it.unique) ops = { equip: [{ slot: it.slot, unique: it.unique }] };
     else if (it.gemName) ops = { addGem: { name: it.gemName, group: gemTarget ? gemTarget.group : undefined } };
     else if (it.addGroup) ops = { addGroup: it.addGroup };
+    const snap0 = snapIds();
     const r = await api({ op: "apply", ...ops });
-    if (r.ok) { S = r.state; await syncConfig(); runPreviews(); }
+    if (r.ok) { S = r.state; await syncConfig(); markNew(snap0); runPreviews(); }
   }));
 }
 function slotForUnique(u) { return u.slot === "Ring 1" ? "Ring 1" : u.slot; }
@@ -1002,9 +1072,40 @@ async function renderLoops(P) {
     const it = L[+b.dataset.add];
     prev = S.stats;
     const ops = it.nodeId ? { addNodes: [it.nodeId] } : it.unique ? { equip: [{ slot: it.slot, unique: it.unique }] } : it.gemName ? { addGem: { name: it.gemName, group: it.group } } : { addGroup: it.addGroup };
+    const snap0 = snapIds();
     const r = await api({ op: "apply", ...ops });
-    if (r.ok) { S = r.state; await syncConfig(); }
+    if (r.ok) { S = r.state; await syncConfig(); markNew(snap0); }
   }));
+}
+// ------------------------------------------------------------------ why this DPS
+// every card and every condition taken out alone and recalculated by PoB; values do not add up to the total
+// because effects multiply each other
+let whyCache = null;
+async function renderWhy(P) {
+  const s0 = S.stats;
+  P.innerHTML = `<div class="item"><div class="n">주 스킬 초당 피해 ${fmt(dps(s0))}</div><div class="small">PoB가 주 스킬(${esc(($("#mainSkill").selectedOptions[0] || {}).text || "")}) 하나를 계산한 값이에요. 아래 숫자는 그것 하나만 빼고 다시 계산했을 때의 변화예요. 효과끼리 곱해지기 때문에 다 더해도 총합과 같지 않아요.</div></div><div id="whyRes"><div class="small">계산 중…</div></div>`;
+  const ps = portState(cards());
+  const conds = Object.keys(G.ports).filter((p) => ps.active[p] && G.ports[p].config && Object.keys(G.ports[p].config).length).map((p) => {
+    const cfg = {}; Object.entries(G.ports[p].config).forEach(([k, v]) => (cfg[k] = typeof v === "number" ? 0 : false));
+    return { key: p, config: cfg };
+  });
+  const key = JSON.stringify(s0) + conds.map((c) => c.key).join(",");
+  if (!whyCache || whyCache.key !== key) {
+    const r = await api({ op: "condContrib", conds });
+    if (!r.ok || tab !== "why") return;
+    whyCache = { key, conds: r.results || [] };
+  }
+  const f = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1)) + "%";
+  const byKey = Object.fromEntries(cards().map((c) => [c.key, c]));
+  const cardRows = Object.values(CONTRIB).filter((x) => x.dpsPct != null && Math.abs(x.dpsPct) >= 0.5 && byKey[x.key]).sort((a, b) => a.dpsPct - b.dpsPct).slice(0, 25)
+    .map((x) => `<div class="portrow"><div class="pn">${esc(byKey[x.key].name)} <span class="small">${KNAME[byKey[x.key].kind] || ""}</span></div><span class="cb ${x.dpsPct < 0 ? "dn" : "up"}">${f(x.dpsPct)}</span></div>`).join("");
+  const condRows = whyCache.conds.filter((x) => x.dpsPct != null).sort((a, b) => a.dpsPct - b.dpsPct).map((x) => {
+    const mk = [...new Set((ps.prod[x.key] || []).map((c) => c.name))];
+    const warn = mk.length ? "" : `<div class="small" style="color:#ff8a7a">⚠ 빌드 안에 이 조건을 만드는 카드가 없어요. PoB 설정으로만 켜져 있어요.</div>`;
+    return `<div class="portrow"><div class="pn">${esc(PN(x.key))}${mk.length ? `<div class="small">만드는 것: ${esc(mk.slice(0, 3).join(", "))}</div>` : ""}${warn}</div><span class="cb ${x.dpsPct < -0.05 ? "dn" : "z"}">${Math.abs(x.dpsPct) < 0.05 ? "0" : f(x.dpsPct)}</span></div>`;
+  }).join("");
+  $("#whyRes").innerHTML = `<h3 style="margin:8px 0 4px">카드를 하나씩 빼면</h3>${cardRows || '<div class="small">기여도 계산 중이에요. 잠시 뒤 다시 눌러 주세요.</div>'}
+    <h3 style="margin:10px 0 4px">계산에 들어간 조건을 하나씩 끄면</h3>${condRows || '<div class="small">켜진 조건이 없어요.</div>'}`;
 }
 // ------------------------------------------------------------------ optimiser
 // PoB's own greedy search on the loaded build: best supports for the main skill, passive swaps (refund the weakest
@@ -1034,6 +1135,7 @@ async function runOpt() {
   if (!$("#o_ehp").checked) options.ehpWeight = 0;
   $("#o_go").disabled = true;
   $("#o_res").innerHTML = '<div class="small">최적화 중… 보통 1~3분 걸려요 (고유 장비까지 켜면 더 오래).</div>';
+  const snap = snapIds();
   const r = await api({ op: "optimize", options });
   $("#o_go").disabled = false;
   if (!r.ok) { $("#o_res").innerHTML = `<div class="prob">실패: ${esc(r.error || "")}</div>`; return; }
@@ -1041,6 +1143,7 @@ async function runOpt() {
   optResult = r;
   prev = r.before; S = r.state; ORIG = { ...(S.config || {}) };
   await syncConfig();
+  markNew(snap);
   setTab("opt");
 }
 function showOpt(r) {
@@ -1064,6 +1167,7 @@ async function renderPalette() {
   if (!S) { P.innerHTML = '<div class="small">먼저 빌드를 불러오세요.</div>'; return; }
   if (tab === "loop") return renderLoops(P);
   if (tab === "opt") return renderOpt(P);
+  if (tab === "why") return renderWhy(P);
   if (tab === "port") {
     const opts = Object.keys(G.ports).sort((a, b) => PN(a).localeCompare(PN(b), "ko")).map((k) => `<option value="${k}" ${portFilter && portFilter.port === k ? "selected" : ""}>${esc(PN(k))}</option>`).join("");
     const head = `<div class="row"><select id="pf"><option value="">연결 종류 선택…</option>${opts}</select><select id="pd"><option value="out" ${portFilter && portFilter.dir === "in" ? "selected" : ""}>만드는 것</option><option value="in" ${portFilter && portFilter.dir === "out" ? "selected" : ""}>쓰는 것</option></select></div>
@@ -1139,8 +1243,9 @@ async function renderPalette() {
       }).join("");
       $("#res").querySelectorAll("button[data-add]").forEach((b) => b.addEventListener("click", async () => {
         prev = S.stats;
+        const snap0 = snapIds();
         const r = await api({ op: "apply", addGem: { name: list[+b.dataset.add].gemName || list[+b.dataset.add].name, group: gi } });
-        if (r.ok) { S = r.state; await syncConfig(); renderPalette(); }
+        if (r.ok) { S = r.state; await syncConfig(); markNew(snap0); renderPalette(); }
       }));
     };
     $("#q").addEventListener("input", () => { clearTimeout(go.t); go.t = setTimeout(go, 200); });

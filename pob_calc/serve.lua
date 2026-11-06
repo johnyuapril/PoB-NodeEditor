@@ -499,6 +499,23 @@ return function(H)
 					local a = cur()
 					return { state = state(), undo = undo, before = b, after = a, dpsPct = pctD(a, b), problems = problems(a, b),
 						log = okO and res.log or { tostring(res) }, seconds = okO and res.seconds or nil }
+				elseif r.op == "condContrib" then
+					-- each condition the calculation assumes (a PoB config setting): switch it off alone, recalc, measure, restore
+					local tab = build.configTab
+					local b = cur()
+					local res = {}
+					for i, c in ipairs(r.conds or {}) do
+						local saved = {}
+						for k, v in pairs(c.config or {}) do saved[k] = tab.input[k] end
+						H.applyConfig(c.config)
+						H.recalc()
+						local x = cur()
+						for k in pairs(c.config or {}) do tab.input[k] = saved[k] end
+						tab:BuildModList() build.buildFlag = true
+						res[i] = { key = c.key, dpsPct = pctD(x, b), ehpPct = (b.TotalEHP or 0) ~= 0 and ((x.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
+					end
+					H.recalc()
+					return { results = res }
 				elseif r.op == "reservations" then
 					local env = build.calcsTab.mainEnv
 					local out = {}
