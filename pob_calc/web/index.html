@@ -37,6 +37,23 @@ button.primary { background: #24406b; border-color: #335a95; }
 .item .s { color: var(--dim); font-size: 11px; white-space: pre-line; margin-top: 2px; }
 .chip { font-size: 11px; padding: 0 5px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .kind { font-size: 10px; padding: 0 5px; border-radius: 3px; color: #000; font-weight: 600; }
+#left { grid-column: 1; grid-row: 1; } #right { grid-column: 3; grid-row: 1; }
+#treeView { grid-column: 2; grid-row: 1; position: relative; z-index: 5; display: none; background: #0d0f13; min-height: 0; overflow: hidden; }
+#tsvg { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+#tE1 path { stroke: #343a44; stroke-width: 10; fill: none; }
+#tE2 path { stroke: #c9a24a; stroke-width: 18; fill: none; } #tE2 path.w1 { stroke: #e2685f; } #tE2 path.w2 { stroke: #58c27d; }
+.tn { fill: #262a31; stroke: #5a616c; stroke-width: 6; cursor: pointer; }
+.tn:hover { stroke: #fff; }
+.tn.Notable { stroke: #b89a55; stroke-width: 9; } .tn.Keystone { stroke: #c77bd6; stroke-width: 12; } .tn.Socket { stroke: #6aa3ff; stroke-width: 9; }
+.tn.ClassStart { fill: #15171b; stroke: #777; } .tn.attr { fill: #20242a; }
+.tn.on { fill: #d8b04c; } .tn.on.w1 { fill: #e2685f; } .tn.on.w2 { fill: #58c27d; } .tn.on.Keystone { fill: #c77bd6; }
+.tn.hit { stroke: #fff36b; stroke-width: 22; }
+#tL text { display: none; fill: #b9bfc8; font-size: 34px; text-anchor: middle; pointer-events: none; paint-order: stroke; stroke: #0d0f13; stroke-width: 8px; }
+#tL text.on { fill: #f0d27a; } #tsvg.near #tL text { display: block; }
+#tHov circle { fill: none; stroke-width: 12; pointer-events: none; } #tHov .add { stroke: #6ad7ff; } #tHov .rm { stroke: #ff5a5a; }
+#tPanel { position: absolute; left: 10px; top: 10px; width: 300px; max-height: calc(100% - 20px); overflow: auto; background: #12151af2; border: 1px solid var(--line); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+#tPanel .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+#tPanel #tSum div { padding: 1px 0; border-bottom: 1px solid #1d2128; }
 #canvas { position: relative; overflow: hidden; cursor: grab; min-height: 0;
   background-color: #1e1f22;
   background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
@@ -120,6 +137,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
     <label class="small"><input type="checkbox" id="hideBare" checked> 연결 없는 카드 숨기기</label>
     <label class="small" title="치명타 확률, 치명타 피해 보너스, 속도처럼 전체에 적용되는 능력치를 '전역 효과' 카드로 모아 봅니다"><input type="checkbox" id="showStats" checked> 전역 효과</label>
     <label class="small" title="PoB가 해석하지 못한 문장에서 단어로 읽은 연결(점선)을 숨깁니다"><input type="checkbox" id="hideGuess"> 추정 연결 숨기기</label><span class="small" id="hiddenInfo"></span>
+    <button id="treeBtn" title="poe2db처럼 전체 패시브 트리를 보고 직접 찍습니다. 찍을 때마다 PoB가 다시 계산합니다">패시브 트리</button>
     <button id="updBtn" title="새 버전이 있으면 받아서 바로 적용합니다">업데이트</button>
     <div id="stats"></div>
   </div>
@@ -130,7 +148,18 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
       </div>
       <div id="palette"></div>
     </div>
-    <div id="canvas"><div id="world"><svg id="wires"></svg></div></div>
+    <div id="treeView"><svg id="tsvg"><g id="tE1"></g><g id="tE2"></g><g id="tHov"></g><g id="tN"></g><g id="tL"></g></svg>
+      <div id="tPanel">
+        <div class="row"><b style="white-space:nowrap">패시브 트리</b><span style="flex:1"></span><button id="tFit" title="전체 보기">전체</button><button id="tClose">닫기</button></div>
+        <input id="tSearch" placeholder="검색 (예: 치명타, 냉기, 정신력)"><span id="tHits" class="small"></span>
+        <div id="tPoints" class="small"></div>
+        <div class="row small">찍을 곳 <select id="tMode"><option value="0">일반</option><option value="1">무기 세트 1</option><option value="2">무기 세트 2</option></select>
+          속성 노드 <select id="tAttr"><option value="1">힘</option><option value="2">민첩</option><option value="3">지능</option></select></div>
+        <div class="small" style="color:var(--dim)">누르면 찍기·빼기 (PoB와 같은 경로). 마우스를 올리면 PoB가 계산한 변화가 보여요. 찍은 속성 노드는 오른쪽 클릭으로 바꿔요. 휠로 확대, 끌어서 이동.</div>
+        <details open><summary class="small">찍은 능력치 합계</summary><div id="tSum" class="small"></div></details>
+      </div>
+    </div>
+    <div id="canvas" style="grid-column:2;grid-row:1"><div id="world"><svg id="wires"></svg></div></div>
     <div class="side" id="right">
       <h3>연결 상태</h3>
       <div class="small">선 = PoB 설정. 생산자가 있으면 켜지고, 끄면 그 조건이 없는 상태로 계산합니다.</div>
@@ -193,16 +222,16 @@ const savePos = () => { try { localStorage.setItem("pob-drag:" + buildId, JSON.s
 
 // ------------------------------------------------------------------ server
 let queue = Promise.resolve();
-function api(req) {
+function api(req, quiet) {
   const run = async () => {
-    $("#busy").style.display = "block";
+    if (!quiet) $("#busy").style.display = "block";
     try {
       const r = await fetch("/api", { method: "POST", body: JSON.stringify(req) });
       const j = await r.json();
       if (!j.ok) showMsg(j.error || "오류");
       else if (j.warnings && j.warnings.length) showMsg(j.warnings.join(" / "));
       return j;
-    } finally { $("#busy").style.display = "none"; }
+    } finally { if (!quiet) $("#busy").style.display = "none"; }
   };
   queue = queue.then(run, run);
   return queue;
@@ -522,6 +551,7 @@ let SRCN = {}, FOCUS = null, statSel = null;
 const COLX = { 2: 560, 3: 900, 4: 1240, 5: 1580 };
 const srcCount = (p) => SRCN[p] || 0;
 function render() {
+  setTimeout(treeSync, 0);
   CONSUMED = null;
   const all = cards();
   CONSUMED = new Set(all.filter((c) => c.ent && !c.off).flatMap((c) => c.ent.in));
@@ -1077,6 +1107,228 @@ async function renderLoops(P) {
     if (r.ok) { S = r.state; await syncConfig(); markNew(snap0); }
   }));
 }
+// ------------------------------------------------------------------ passive tree
+// the same job as poe2db's tree page (search, click to allocate, points, weapon sets, stat totals), but every
+// allocation is PoB's own (same paths, same weapon-set rules) and every hover is measured by PoB
+let TREE = null, TALLOC = null, treeOpen = false, tview = null, tHover = null, tVer = 0, treeS = null;
+const tHoverRes = new Map();
+const ATTR_KO = { Strength: "힘", Dexterity: "민첩", Intelligence: "지능" };
+const ATTR_NEXT = { Strength: 2, Dexterity: 3, Intelligence: 1 };   // PoB attribute index: 1 힘, 2 민첩, 3 지능
+const TR = { Normal: 24, Notable: 42, Keystone: 62, Socket: 44, ClassStart: 64, AscendClassStart: 30 };
+function tName(n) {
+  const al = TALLOC && TALLOC.map.get(n.id);
+  if (n.attr && al && al.attr) return ATTR_KO[al.attr] || al.attr;
+  const k = KO.nodes[String(n.id)];
+  return k && k.n ? k.n : T(n.dn);
+}
+function tStats(n) { const k = KO.nodes[String(n.id)]; return k && k.s && k.s.length ? k.s : (n.sd || []).map(TL); }
+const tVisible = (n) => n.t !== "Mastery" && (!n.a || (TALLOC && n.a === TALLOC.ascendancy));
+// ascendancy nodes sit far outside the tree in the data; the game shows the chosen one in the middle
+const tPos = (n) => (n.a && n.ax != null ? [n.x - n.ax, n.y - n.ay] : [n.x, n.y]);
+function tEdge(a, b, orbit) {
+  const [x1, y1] = tPos(a), [x2, y2] = tPos(b), R = TREE.L.radii;
+  const dx = x2 - x1, dy = y2 - y1, dist = Math.hypot(dx, dy) || 1;
+  let r = 0, cx = 0, cy = 0;
+  if (orbit && R[Math.abs(orbit)]) {
+    r = R[Math.abs(orbit)];
+    if (dist < 2 * r) {
+      const perp = Math.sqrt(r * r - dist * dist / 4) * (orbit > 0 ? 1 : -1);
+      cx = x1 + dx / 2 + perp * (dy / dist); cy = y1 + dy / 2 - perp * (dx / dist);
+    } else r = 0;
+  } else if (a.g === b.g && a.o === b.o && a.o > 0 && a.gx != null) {
+    r = R[a.o]; cx = a.gx; cy = a.gy; if (a.a && a.ax != null) { cx -= a.ax; cy -= a.ay; }
+  }
+  if (!r) return `M${x1},${y1}L${x2},${y2}`;
+  const sweep = (cx - x1) * -dy + (cy - y1) * dx > 0 ? 1 : 0;
+  return `M${x1},${y1}A${r},${r} 0 0 ${sweep} ${x2},${y2}`;
+}
+function tText(n) { return (tName(n) + " " + tStats(n).join(" ") + " " + (n.dn || "") + " " + (n.sd || []).join(" ")).toLowerCase(); }
+function setAlloc(a) {
+  TALLOC = { ...a, map: new Map((a.nodes || []).map(([id, mode, attr]) => [id, { mode, attr }])) };
+  tVer++; tHoverRes.clear();
+  const over = (v, m) => (v > m ? ` style="color:var(--bad)"` : "");
+  $("#tPoints").innerHTML = `<span${over(a.used, a.usedMax)}>패시브 ${a.used} / ${a.usedMax}</span> · <span${over(a.asc, a.ascMax)}>전직 ${a.asc} / ${a.ascMax}</span><br>
+    <span style="color:#e2685f">무기 세트 1: ${a.ws1} / ${a.wsMax}</span> · <span style="color:#58c27d">무기 세트 2: ${a.ws2} / ${a.wsMax}</span>`;
+  $("#tMode").value = String(a.allocMode || 0);
+  $("#tAttr").value = String(a.attributeIndex || 1);
+}
+function drawTree() {
+  if (!TREE || !TALLOC) return;
+  const { L, byId } = TREE, A = TALLOC.map, q = $("#tSearch").value.trim().toLowerCase();
+  let e1 = "", e2 = "", nd = "", hit = 0;
+  const seen = new Set();
+  L.nodes.forEach((n) => {
+    if (!tVisible(n)) return;
+    n.l.forEach(([id, orb]) => {
+      const m = byId.get(id);
+      if (!m || !tVisible(m)) return;
+      const k = n.id < id ? n.id + "-" + id : id + "-" + n.id;
+      if (seen.has(k)) return; seen.add(k);
+      const d = tEdge(n, m, orb), an = A.get(n.id), am = A.get(id);
+      if (an && am) e2 += `<path d="${d}" class="${an.mode && an.mode === am.mode ? "w" + an.mode : ""}"/>`;
+      else e1 += `<path d="${d}"/>`;
+    });
+  });
+  L.nodes.forEach((n) => {
+    if (!tVisible(n)) return;
+    const [x, y] = tPos(n), al = A.get(n.id);
+    let cls = "tn " + (n.t || "Normal") + (al ? " on w" + (al.mode || 0) : "") + (n.attr ? " attr" : "");
+    if (q && tText(n).includes(q)) { cls += " hit"; hit++; }
+    nd += `<circle cx="${x}" cy="${y}" r="${TR[n.t] || 24}" class="${cls}" data-id="${n.id}"/>`;
+  });
+  // names of notables and keystones, shown once zoomed in far enough to read them
+  $("#tL").innerHTML = L.nodes.filter((n) => tVisible(n) && (n.t === "Notable" || n.t === "Keystone" || (n.a && n.t !== "AscendClassStart"))).map((n) => {
+    const [x, y] = tPos(n); return `<text x="${x}" y="${y + (TR[n.t] || 24) + 46}" class="${A.has(n.id) ? "on" : ""}">${esc(tName(n))}</text>`; }).join("");
+  $("#tE1").innerHTML = e1; $("#tE2").innerHTML = e2; $("#tN").innerHTML = nd; $("#tHov").innerHTML = "";
+  $("#tHits").textContent = q ? `${hit}개 찾음` : "";
+  $("#tSum").innerHTML = treeSummary();
+}
+// stat totals of everything allocated, like poe2db's list: same wording with one number is summed
+function treeSummary() {
+  const agg = new Map(), attrs = { 힘: 0, 민첩: 0, 지능: 0 };
+  TALLOC.map.forEach((al, id) => {
+    const n = TREE.byId.get(id);
+    if (!n || n.t === "ClassStart" || n.t === "AscendClassStart") return;
+    if (n.attr) { const k = ATTR_KO[al.attr]; if (k) attrs[k]++; return; }
+    tStats(n).forEach((line) => {
+      line.split("\n").forEach((l) => {
+        const nums = l.match(/\d+(?:\.\d+)?/g) || [], key = l.replace(/\d+(?:\.\d+)?/g, "#");
+        const e = agg.get(key) || { n: 0, sum: 0, one: nums.length === 1, line: l };
+        e.n++; if (e.one) e.sum += +nums[0]; agg.set(key, e);
+      });
+    });
+  });
+  const rows = [...agg.entries()].sort((a, b) => b[1].n - a[1].n).map(([k, e]) =>
+    `<div>${esc(e.one ? k.replace("#", +e.sum.toFixed(2)) : e.line)}${!e.one && e.n > 1 ? ` <span class="small">×${e.n}</span>` : ""}</div>`).join("");
+  const at = Object.entries(attrs).filter(([, v]) => v).map(([k, v]) => `${k} ${v}개`).join(", ");
+  return (at ? `<div class="small">속성 노드: ${at}</div>` : "") + rows;
+}
+function tFit() {
+  const svg = $("#tsvg"), w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  TREE.L.nodes.forEach((n) => { if (!tVisible(n)) return; const [x, y] = tPos(n); x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); });
+  const k = Math.max((x1 - x0) / w, (y1 - y0) / h) * 1.04;
+  tview = { x: (x0 + x1) / 2 - (w * k) / 2, y: (y0 + y1) / 2 - (h * k) / 2, k };
+  tApplyView();
+}
+function tApplyView() { const svg = $("#tsvg"); svg.classList.toggle("near", tview.k < 4); svg.setAttribute("viewBox", `${tview.x} ${tview.y} ${svg.clientWidth * tview.k} ${svg.clientHeight * tview.k}`); }
+function tWorld(ev) { const r = $("#tsvg").getBoundingClientRect(); return [tview.x + (ev.clientX - r.left) * tview.k, tview.y + (ev.clientY - r.top) * tview.k]; }
+async function openTree(on) {
+  treeOpen = on ?? !treeOpen;
+  $("#treeView").style.display = treeOpen ? "block" : "none";
+  $("#treeBtn").classList.toggle("primary", treeOpen);
+  hideTreeTip();
+  if (!treeOpen) return;
+  if (!S) { showMsg("먼저 빌드를 불러와 주세요"); return; }
+  const r = await api({ op: "tree", layout: !TREE });
+  if (!r.ok) return;
+  if (r.layout) { const byId = new Map(); r.layout.nodes.forEach((n) => byId.set(n.id, n)); TREE = { L: r.layout, byId }; tview = null; }
+  treeS = S; setAlloc(r.alloc); drawTree();
+  if (!tview) tFit(); else tApplyView();
+}
+// another tab (optimiser, palette) changed the build while the tree is open: refresh what is allocated
+function treeSync() {
+  if (!treeOpen || !S || S === treeS || !TREE) return;
+  treeS = S;
+  api({ op: "tree" }, true).then((r) => { if (r.ok) { setAlloc(r.alloc); drawTree(); } });
+}
+async function treeChanged(r, snap) {
+  if (!r.ok) return;
+  S = r.state; treeS = S; setAlloc(r.alloc);
+  if (r.problems && r.problems.length) showMsg("⚠ " + r.problems.join(" / "));
+  await syncConfig(); markNew(snap); treeS = S; drawTree();
+}
+async function treeClick(id) {
+  const n = TREE.byId.get(id);
+  if (!n || n.t === "ClassStart" || n.t === "AscendClassStart") return;
+  hideTreeTip();
+  prev = S.stats; const snap = snapIds();
+  await treeChanged(await api({ op: "treeClick", id }), snap);
+}
+async function treeAttr(id) {
+  const al = TALLOC.map.get(id);
+  if (!al || !al.attr) return;
+  hideTreeTip();
+  prev = S.stats; const snap = snapIds();
+  await treeChanged(await api({ op: "treeMode", switchAttr: id, attributeIndex: ATTR_NEXT[al.attr] || 1 }), snap);
+}
+function hideTreeTip() { $("#tip").style.display = "none"; tHover = null; const h = $("#tHov"); if (h) h.innerHTML = ""; }
+function showTreeTip(id, ev) {
+  const n = TREE.byId.get(id), tip = $("#tip");
+  if (!n) return;
+  const al = TALLOC.map.get(id), res = tHoverRes.get(id);
+  const kind = { Notable: "주요", Keystone: "핵심", Socket: "주얼 슬롯", ClassStart: "시작 지점", AscendClassStart: "전직 시작" }[n.t] || (n.a ? "전직" : n.attr ? "속성" : "일반");
+  let h = `<b>${esc(tName(n))}</b> <span class="p">${kind}${al && al.mode ? ` · 무기 세트 ${al.mode}` : ""}</span>\n${esc(tStats(n).join("\n"))}`;
+  if (n.t !== "ClassStart" && n.t !== "AscendClassStart") {
+    if (!res) h += `\n<span class="p">PoB 계산 중…</span>`;
+    else if (res.reachable === false) h += `\n<span class="st">이어진 길이 없어요</span>`;
+    else {
+      const f = (v) => (v == null ? "-" : (v > 0 ? "+" : "") + v.toFixed(Math.abs(v) >= 10 ? 0 : 1) + "%");
+      const pts = (res.nodes || []).length;
+      h += `\n<span class="q">${res.remove ? `누르면 빼기: ${pts}개 노드가 빠져요` : `누르면 찍기: ${pts}포인트`}</span>`;
+      h += `\n<span class="st">주 스킬 피해 ${f(res.dpsPct)} · 유효 생명력 ${f(res.ehpPct)}</span>`;
+      if (res.problems && res.problems.length) h += `\n<span style="color:#ff8a7a">⚠ ${esc(res.problems.join(" / "))}</span>`;
+    }
+    if (n.attr && al) h += `\n<span class="p">오른쪽 클릭: 힘/민첩/지능 바꾸기</span>`;
+  }
+  tip.innerHTML = h; tip.style.display = "block";
+  if (ev) { tip.style.left = Math.min(ev.clientX + 16, innerWidth - 400) + "px"; tip.style.top = Math.min(ev.clientY + 12, innerHeight - tip.offsetHeight - 8) + "px"; }
+}
+function drawHoverPath(res) {
+  const g = $("#tHov"); g.innerHTML = "";
+  if (!res || !res.nodes) return;
+  g.innerHTML = res.nodes.map((id) => { const n = TREE.byId.get(id); if (!n || !tVisible(n)) return ""; const [x, y] = tPos(n);
+    return `<circle cx="${x}" cy="${y}" r="${(TR[n.t] || 24) + 14}" class="${res.remove ? "rm" : "add"}"/>`; }).join("");
+}
+function initTree() {
+  const svg = $("#tsvg");
+  let drag = null;
+  svg.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; drag = { x: ev.clientX, y: ev.clientY, vx: tview.x, vy: tview.y, moved: false }; });
+  addEventListener("mousemove", (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) { drag.moved = true; hideTreeTip(); }
+    tview.x = drag.vx - dx * tview.k; tview.y = drag.vy - dy * tview.k; tApplyView();
+  });
+  addEventListener("mouseup", (ev) => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (d.moved) return;
+    const c = ev.target.closest && ev.target.closest("circle[data-id]");
+    if (c) treeClick(+c.dataset.id);
+  });
+  svg.addEventListener("contextmenu", (ev) => { const c = ev.target.closest("circle[data-id]"); if (!c) return; ev.preventDefault(); treeAttr(+c.dataset.id); });
+  svg.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    const [wx, wy] = tWorld(ev), f = ev.deltaY > 0 ? 1.18 : 1 / 1.18;
+    tview.k = Math.min(60, Math.max(0.4, tview.k * f));
+    const r = svg.getBoundingClientRect();
+    tview.x = wx - (ev.clientX - r.left) * tview.k; tview.y = wy - (ev.clientY - r.top) * tview.k; tApplyView();
+  }, { passive: false });
+  svg.addEventListener("mouseover", (ev) => {
+    const c = ev.target.closest("circle[data-id]");
+    if (!c || drag) return;
+    const id = +c.dataset.id; tHover = id; showTreeTip(id, ev);
+    const have = tHoverRes.get(id); if (have) { drawHoverPath(have); return; }
+    const n = TREE.byId.get(id); if (!n || n.t === "ClassStart" || n.t === "AscendClassStart") return;
+    const ver = tVer;
+    setTimeout(async () => {
+      if (tHover !== id) return;
+      const r = await api({ op: "treeHover", id }, true);
+      if (!r.ok || ver !== tVer) return;
+      tHoverRes.set(id, r);
+      if (tHover === id) { showTreeTip(id, null); drawHoverPath(r); }
+    }, 120);
+  });
+  svg.addEventListener("mousemove", (ev) => { if (tHover != null && !drag) { const tip = $("#tip"); tip.style.left = Math.min(ev.clientX + 16, innerWidth - 400) + "px"; tip.style.top = Math.min(ev.clientY + 12, innerHeight - tip.offsetHeight - 8) + "px"; } });
+  svg.addEventListener("mouseout", (ev) => { if (ev.target.closest && ev.target.closest("circle[data-id]")) hideTreeTip(); });
+  $("#tSearch").addEventListener("input", () => { clearTimeout(initTree.t); initTree.t = setTimeout(drawTree, 200); });
+  $("#tFit").addEventListener("click", tFit);
+  $("#tClose").addEventListener("click", () => openTree(false));
+  $("#treeBtn").addEventListener("click", () => openTree());
+  $("#tMode").addEventListener("change", async (ev) => { const r = await api({ op: "treeMode", allocMode: +ev.target.value }); if (r.ok) setAlloc(r.alloc); });
+  $("#tAttr").addEventListener("change", async (ev) => { const r = await api({ op: "treeMode", attributeIndex: +ev.target.value }); if (r.ok) setAlloc(r.alloc); });
+}
 // ------------------------------------------------------------------ why this DPS
 // every card and every condition taken out alone and recalculated by PoB; values do not add up to the total
 // because effects multiply each other
@@ -1259,6 +1511,7 @@ async function loadBuild(code) {
   const r = await api({ op: "load", code: code.trim() });
   if (!r.ok) return;
   S = r.state; prev = null; override = {}; ghosts = []; selected = null; lastSent = {};
+  TREE = null; treeS = null;   // another build can be on another tree version
   loadDragged(code.trim());
   ORIG = { ...(S.config || {}) };
   prodAtLoad = new Set(Object.keys(portState(cards()).prod));
@@ -1292,6 +1545,7 @@ $("#examples").addEventListener("change", (e) => { if (e.target.value) { $("#cod
 let TIPS = {};
 function gemAttr(en) { return en && TIPS[en] ? ` data-gem="${esc(en)}"` : ""; }
 document.addEventListener("mouseover", (ev) => {
+  if (ev.target.closest && ev.target.closest("#tsvg")) return;   // the passive tree runs its own tooltip
   const t = ev.target.closest && ev.target.closest("[data-gem]"); const tip = $("#tip");
   if (!t) { tip.style.display = "none"; return; }
   const d = TIPS[t.dataset.gem]; if (!d) return;
@@ -1314,6 +1568,7 @@ document.addEventListener("mouseover", (ev) => {
     $("#examples").innerHTML += ex.map((x) => `<option value="${esc(x.code)}">${esc(x.name)}</option>`).join("");
   } catch (e) {}
   renderPalette();
+  initTree();
   checkUpdate();
   setInterval(checkUpdate, 30 * 60 * 1000);
   let again = null;

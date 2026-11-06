@@ -81,6 +81,18 @@ return function(H)
 			mainGroup = build.mainSocketGroup, config = cfg, stats = cur() }
 	end
 
+	local function treeAlloc()
+		local spec = build.spec
+		local list = {}
+		for id, n in pairs(spec.allocNodes) do list[#list+1] = { id, n.allocMode or 0, n.isAttribute and n.dn or nil } end
+		local used, asc, _, _, ws1, ws2 = spec:CountAllocNodes()
+		local mo = build.calcsTab.mainOutput or {}
+		local maxWS = (build.maxWeaponSets or 24) + (mo.PassivePointsToWeaponSetPoints or 0)
+		return { nodes = list, used = used - math.min(ws1, ws2), usedMax = 99 + (build.maxWeaponSets or 24) + (mo.ExtraPoints or 0),
+			asc = asc, ascMax = 8, ws1 = ws1, ws2 = ws2, wsMax = maxWS, allocMode = spec.allocMode or 0, attributeIndex = spec.attributeIndex or 1,
+			class = spec.curClassName, ascendancy = spec.curAscendClassName }
+	end
+
 	local function shortName(item) return (item.name or ""):match("^(.-),") or item.name end
 	local function findUnique(name)
 		for _, item in pairs(main.uniqueDB.list) do if item.name == name or shortName(item) == name then return item end end
@@ -545,6 +557,80 @@ return function(H)
 					if f then f:close() end
 					local done = log:find("UPDATE_OK", 1, true) ~= nil
 					return { updated = done, log = log, restart = done }
+				elseif r.op == "tree" then
+					-- the whole passive tree as PoB holds it (same ids, same paths), plus what is allocated now
+					local spec = build.spec
+					local out = { alloc = treeAlloc() }
+					if r.layout then
+						local nodes, groups = {}, {}
+						local ascStart = {}
+						for id, n in pairs(spec.nodes) do if n.type == "AscendClassStart" and n.ascendancyName then ascStart[n.ascendancyName] = n end end
+						for id, n in pairs(spec.nodes) do
+							if n.x and n.type ~= "OnlyImage" and n.group then
+								local links = {}
+								for _, c in ipairs(n.connections or {}) do
+									local o = spec.nodes[c.id]
+									if o and o.x and (o.ascendancyName == n.ascendancyName) and not n.classesStart and not o.classesStart then
+										links[#links+1] = { c.id, c.orbit or 0 }
+									end
+								end
+								local st = ascStart[n.ascendancyName or ""]
+								nodes[#nodes+1] = { id = id, x = math.floor(n.x + 0.5), y = math.floor(n.y + 0.5), t = n.type, a = n.ascendancyName,
+									g = n.g, o = n.o, gx = n.group and math.floor(n.group.x + 0.5) or nil, gy = n.group and math.floor(n.group.y + 0.5) or nil, dn = n.dn, sd = n.sd, l = links, attr = n.isAttribute or nil,
+									cs = n.classesStart, ax = st and math.floor(st.x + 0.5) or nil, ay = st and math.floor(st.y + 0.5) or nil }
+							end
+						end
+						local radii = {}
+						for i, r0 in ipairs(spec.tree.orbitRadii or {}) do radii[i] = r0 end
+						out.layout = { nodes = nodes, radii = radii, version = spec.treeVersion }
+					end
+					return out
+				elseif r.op == "treeMode" then
+					-- where new points go: 0 normal, 1/2 weapon set; which attribute an attribute node takes
+					if r.allocMode then build.spec.allocMode = r.allocMode end
+					if r.attributeIndex then build.spec.attributeIndex = r.attributeIndex end
+					if r.switchAttr then
+						build.spec:SwitchAttributeNode(r.switchAttr, r.attributeIndex or build.spec.attributeIndex or 1)
+						build.spec:BuildAllDependsAndPaths()
+						build.buildFlag = true
+						H.recalc()
+					end
+					return { state = state(), alloc = treeAlloc(), before = before, after = cur(), delta = H.delta(before, cur()) }
+				elseif r.op == "treeClick" then
+					-- the same as clicking a node in PoB: allocate with its path, or take it out with everything hanging off it
+					local n = build.spec.nodes[tonumber(r.id)]
+					if not n then error("no node " .. tostring(r.id)) end
+					if n.alloc then
+						if n.type == "ClassStart" or n.type == "AscendClassStart" then error("시작 지점은 뺄 수 없어요") end
+						build.spec:DeallocNode(n)
+					else
+						if not n.path then error("이어진 길이 없어요") end
+						build.spec:AllocNode(n)
+					end
+					build.buildFlag = true
+					H.recalc()
+					local a = cur()
+					return { state = state(), alloc = treeAlloc(), before = before, after = a, delta = H.delta(before, a), problems = problems(a, before) }
+				elseif r.op == "treeHover" then
+					-- what a click would do, measured by PoB without changing anything
+					local n = build.spec.nodes[tonumber(r.id)]
+					if not n then error("no node " .. tostring(r.id)) end
+					local calcFunc, baseOut = build.calcsTab:GetMiscCalculator()
+					local b = stats(baseOut)
+					local ov, ids = {}, {}
+					if n.alloc then
+						ov.removeNodes = {}
+						for _, d in ipairs(n.depends or { n }) do ov.removeNodes[d] = true ids[#ids+1] = d.id end
+					else
+						if not n.path then return { reachable = false } end
+						ov.addNodes = {}
+						for _, p in ipairs(build.spec:GetEffectiveAllocationPath(n) or n.path) do ov.addNodes[p] = true ids[#ids+1] = p.id end
+					end
+					local ok, o = pcall(calcFunc, ov, true)
+					if not ok then return { error = tostring(o) } end
+					local s = stats(o)
+					return { remove = n.alloc or false, nodes = ids, dpsPct = pctD(s, b), problems = problems(s, b),
+						ehpPct = (b.TotalEHP or 0) ~= 0 and ((s.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
 				elseif r.op == "export" then
 					local _, code = H.exportCode()
 					return { code = code }
