@@ -592,6 +592,10 @@ return function(H)
 						hitDPS = o.TotalDPS, dotDPS = (o.TotalDot or 0) + (o.BleedDPS or 0) + (o.IgniteDPS or 0) + (o.PoisonDPS or 0), projectiles = o.ProjectileCount,
 						ignite = o.IgniteDPS, bleed = o.BleedDPS, poison = o.PoisonDPS, minion = o.Minion and o.Minion.CombinedDPS or nil }
 					return { results = res, resources = res2, profile = prof }
+				elseif r.op == "catalog" then
+					local okC, res = xpcall(function() return dofile(H.here .. "/catalog.lua")(H, build, r) end, debug.traceback)
+					if not okC then return { ok = false, error = tostring(res) } end
+					return res
 				elseif r.op == "mechDetail" then
 					local okD, res = xpcall(function() return dofile(H.here .. "/mechdetail.lua")(H, build, r, { cur = cur, pctD = pctD, preview = preview }) end, debug.traceback)
 					if not okD then return { ok = false, error = tostring(res) } end
