@@ -49,6 +49,8 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card.off { opacity: .4; }
 .card.sel { outline: 3px solid #ff5a3d; outline-offset: 1px; }
 .card.dim { opacity: .28; }
+.prob { color: #ff7a6b; font-size: 11px; margin-top: 3px; }
+.item.bad { opacity: .55; }
 .colh { position: absolute; white-space: nowrap; font-size: 13px; font-weight: 700; color: #cfd6df; cursor: pointer; user-select: none; padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,.06); }
 .colh span { font-size: 10px; font-weight: 400; color: #8a94a0; margin-left: 4px; } .colh:hover { background: rgba(255,255,255,.12); }
 .cb { font-size: 10px; font-weight: 700; padding: 0 4px; border-radius: 6px; background: rgba(0,0,0,.35); white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; }
@@ -695,6 +697,8 @@ function scheduleContrib(list) {
     render();
   }, 400);
 }
+// real-game limits PoB reports for a candidate (spirit, attributes, full support sockets)
+const probHtml = (x) => x && x.problems && x.problems.length ? `<div class="prob">⚠ 실제로는 불가: ${esc(x.problems.join(", "))}</div>` : "";
 function cbadge(c) {
   const x = CONTRIB[c.key]; if (!x || c.off) return "";
   const d = x.dpsPct, e = x.ehpPct, f = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1)) + "%";
@@ -901,7 +905,8 @@ async function runPreviews() {
     if (!el || !x) return;
     if (!x.ok) { el.textContent = "계산 실패"; return; }
     const ch = (v, k) => v == null ? "" : `<span class="chip ${v > 0.05 ? "up" : v < -0.05 ? "down" : ""}">${k} ${(v > 0 ? "+" : "") + v.toFixed(1)}%</span>`;
-    el.innerHTML = ch(x.dpsPct, "피해") + " " + ch(x.ehpPct, "생존") + (x.points ? ` <span class="small">${x.points}포인트</span>` : "");
+    el.innerHTML = ch(x.dpsPct, "피해") + " " + ch(x.ehpPct, "생존") + (x.points ? ` <span class="small">${x.points}포인트</span>` : "") + probHtml(x);
+    if (x.problems) { const card = el.closest(".item"); if (card) card.classList.add("bad"); }
   });
 }
 function bindAdd() {
@@ -978,7 +983,7 @@ async function renderLoops(P) {
       if (tab !== "loop") return;
       $("#res").innerHTML = `<div class="small">후보 ${list.length}개 중 ${Math.min(i + 40, top.length)}개 계산함…</div>`;
     }
-    const sc = (it) => (it.pv && it.pv.ok ? Math.max(it.pv.dpsPct ?? -1e9, (it.pv.ehpPct ?? -1e9) / 2) : -1e9);
+    const sc = (it) => (it.pv && it.pv.ok ? (it.pv.problems ? -1e6 : 0) + Math.max(it.pv.dpsPct ?? -1e9, (it.pv.ehpPct ?? -1e9) / 2) : -1e9);
     top.sort((x, y) => sc(y) - sc(x));
     loopCache = { key, list: top, total: list.length };
   }
@@ -989,9 +994,9 @@ async function renderLoops(P) {
     const lines = [...new Set(it.loops.slice().sort((x, y) => (y.p !== y.q) - (x.p !== x.q)).map((l) => `${l.a.name} →${PN(l.p)}→ [이것] →${PN(l.q)}→ ${l.b.name}`))];
     const lp = lines.slice(0, 2).join("\n") + (lines.length > 2 ? `\n외 ${lines.length - 2}개` : "");
     const pv = it.pv;
-    return `<div class="item"><div class="t"><span class="n"${gemAttr(it.gemName || (it.addGroup ? it.addGroup.replace(/ 20\/0.*$/, "") : ""))}>${esc(it.name)}</span><span class="kind" style="background:var(${KCOL[it.kind] || "--dim"})">${KNAME[it.kind] || it.kind}</span></div>
+    return `<div class="item ${pv && pv.problems ? "bad" : ""}"><div class="t"><span class="n"${gemAttr(it.gemName || (it.addGroup ? it.addGroup.replace(/ 20\/0.*$/, "") : ""))}>${esc(it.name)}</span><span class="kind" style="background:var(${KCOL[it.kind] || "--dim"})">${KNAME[it.kind] || it.kind}</span></div>
       ${real ? '<div class="small" style="color:var(--warn)" title="받는 효과와 주는 효과가 달라서, 서로 다른 메커니즘이 맞물려 도는 고리">◆ 다른 효과끼리 맞물리는 고리</div>' : ""}<div class="s">${esc(lp)}</div>
-      <div class="t" style="margin-top:4px"><span class="small">${pv ? (pv.ok ? ch(pv.dpsPct, "피해") + " " + ch(pv.ehpPct, "생존") + (pv.points ? ` <span class="small">${pv.points}포인트</span>` : "") : "계산 실패") : "계산 안 함"}</span><button data-add="${i}">추가</button></div></div>`;
+      <div class="t" style="margin-top:4px"><span class="small">${pv ? (pv.ok ? ch(pv.dpsPct, "피해") + " " + ch(pv.ehpPct, "생존") + (pv.points ? ` <span class="small">${pv.points}포인트</span>` : "") : "계산 실패") : "계산 안 함"}</span><button data-add="${i}">${pv && pv.problems ? "그래도 추가" : "추가"}</button></div>${probHtml(pv)}</div>`;
   }).join("");
   $("#res").querySelectorAll("button[data-add]").forEach((b) => b.addEventListener("click", async () => {
     const it = L[+b.dataset.add];
@@ -1064,18 +1069,19 @@ async function renderPalette() {
     }
     const R = supCache.r;
     const sk = R.skillDPS ? "skillPct" : "mainPct";
-    const opts = R.options.slice().sort((a, b) => (b[sk] ?? -1e9) - (a[sk] ?? -1e9) || (b.mainPct ?? 0) - (a.mainPct ?? 0) || (b.ehpPct ?? 0) - (a.ehpPct ?? 0));
+    const bad = (o) => (o.problems ? 1 : 0);
+    const opts = R.options.slice().sort((a, b) => bad(a) - bad(b) || (b[sk] ?? -1e9) - (a[sk] ?? -1e9) || (b.mainPct ?? 0) - (a.mainPct ?? 0) || (b.ehpPct ?? 0) - (a.ehpPct ?? 0));
     const ch = (v, k) => v == null ? "" : `<span class="chip ${v > 0.05 ? "up" : v < -0.05 ? "down" : ""}">${k} ${(v > 0 ? "+" : "") + v.toFixed(1)}%</span>`;
     const go = () => {
       const q = $("#q").value.toLowerCase();
       const list = opts.filter((o) => o.name.toLowerCase().includes(q) || T(o.name).includes(q));
       palItems = list.map((o) => ({ gemName: o.name }));
-      $("#res").innerHTML = `<div class="small" style="margin-bottom:4px">${list.length}개${R.skillDPS ? "" : " · 이 스킬은 자체 피해가 없어 주 스킬 피해로 봅니다"}</div>` + list.map((o, i) => {
+      $("#res").innerHTML = `<div class="small" style="margin-bottom:4px">${list.length}개${R.skillDPS ? "" : " · 이 스킬은 자체 피해가 없어 주 스킬 피해로 봅니다"}${R.supports >= R.maxSupports ? `<div class="prob">보조 칸 ${R.supports}/${R.maxSupports} 가득: 넣으려면 먼저 하나를 빼야 해요. 아래 값은 빼지 않고 더했을 때예요.</div>` : ` · 보조 칸 ${R.supports}/${R.maxSupports}`}</div>` + list.map((o, i) => {
         const e = G.entities["gem:" + o.name];
         const io = e ? "입력: " + (e.in.map(PN).join(", ") || "없음") + "  출력: " + (e.out.map(PN).join(", ") || "없음") : "";
         const chips = (R.skillDPS ? ch(o.skillPct, "이 스킬 피해") : "") + (!R.isMain || !R.skillDPS ? " " + ch(o.mainPct, "주 스킬 피해") : "") + (o.ehpPct && Math.abs(o.ehpPct) > 0.05 ? " " + ch(o.ehpPct, "생존") : "");
-        return `<div class="item"><div class="t"><span class="n"${gemAttr(o.name)}>${esc(T(o.name))}</span><span class="kind" style="background:var(${KCOL[o.lineage ? "lineage" : "support"] || "--dim"})">${KNAME[o.lineage ? "lineage" : "support"]}</span></div>
-          ${io ? `<div class="s">${esc(io)}</div>` : ""}<div class="t" style="margin-top:4px"><span class="small">${o.ok ? chips : "계산 실패"}</span><button data-add="${i}">장착</button></div></div>`;
+        return `<div class="item ${o.problems ? "bad" : ""}"><div class="t"><span class="n"${gemAttr(o.name)}>${esc(T(o.name))}</span><span class="kind" style="background:var(${KCOL[o.lineage ? "lineage" : "support"] || "--dim"})">${KNAME[o.lineage ? "lineage" : "support"]}</span></div>
+          ${io ? `<div class="s">${esc(io)}</div>` : ""}<div class="t" style="margin-top:4px"><span class="small">${o.ok ? chips : "계산 실패"}</span><button data-add="${i}">${o.problems ? "그래도 장착" : "장착"}</button></div>${probHtml(o)}</div>`;
       }).join("");
       $("#res").querySelectorAll("button[data-add]").forEach((b) => b.addEventListener("click", async () => {
         prev = S.stats;

@@ -14,7 +14,7 @@
 return function(H)
 	local dk = H.dkjson
 	local KEYS = { "FullDPS", "CombinedDPS", "TotalEHP", "Life", "EnergyShield", "Mana", "Spirit", "SpiritUnreserved", "Armour", "Evasion",
-		"FireResist", "ColdResist", "LightningResist", "ChaosResist", "CritChance", "CritMultiplier", "Speed", "AverageHit", "PhysicalMaximumHitTaken" }
+		"FireResist", "ColdResist", "LightningResist", "ChaosResist", "CritChance", "CritMultiplier", "Speed", "AverageHit", "PhysicalMaximumHitTaken", "Str", "Dex", "Int", "ReqStr", "ReqDex", "ReqInt" }
 
 	local function stats(out)
 		local s = {}
@@ -25,6 +25,26 @@ return function(H)
 	local function cur() return stats(build.calcsTab.mainOutput or {}) end
 	-- the number the editor shows as DPS: main skill (or its minions), Full DPS only when nothing else is there
 	local function dpsS(s) return math.max(s.CombinedDPS or 0, s.MinionDPS or 0) > 0 and math.max(s.CombinedDPS or 0, s.MinionDPS or 0) or (s.FullDPS or 0) end
+	-- what would make a change impossible in the real game: spirit, attribute requirements (only problems the change adds)
+	local ATTR = { Str = "힘", Dex = "민첩", Int = "지능" }
+	local function problems(s, b, extra)
+		local p = {}
+		local su, bu = s.SpiritUnreserved or 0, b.SpiritUnreserved or 0
+		if su < 0 and su < bu - 0.5 then p[#p+1] = string.format("정신력 부족 (남은 정신력 %d)", math.floor(su)) end
+		for a, kr in pairs(ATTR) do
+			local r, have, br, bh = s["Req" .. a] or 0, s[a] or 0, b["Req" .. a] or 0, b[a] or 0
+			if r > have and (r > br or have < bh) then p[#p+1] = string.format("%s 부족 (요구 %d / 보유 %d)", kr, r, have) end
+		end
+		if extra then p[#p+1] = extra end
+		return #p > 0 and p or nil
+	end
+	-- supports a socket group can hold: a skill gem has at most 5 support sockets
+	local MAXSUP = 5
+	local function supportCount(g)
+		local n = 0
+		for _, gem in ipairs(g.gemList) do if gem.gemData and gem.gemData.grantedEffect and gem.gemData.grantedEffect.support then n = n + 1 end end
+		return n
+	end
 	local function pctD(s, b) local x, y = dpsS(s), dpsS(b) return y ~= 0 and (x - y) / y * 100 or nil end
 
 	local function nodeInfo(n)
@@ -244,7 +264,7 @@ return function(H)
 					for gi, g in ipairs(list) do if g == main then build.mainSocketGroup = gi build.calcsTab.input.skill_number = gi end end
 					build.buildFlag = true
 					H.recalc()
-					res[i] = { ok = true, stats = s, dpsPct = pctD(s, b),
+					res[i] = { ok = true, stats = s, dpsPct = pctD(s, b), problems = problems(s, b),
 						ehpPct = (b.TotalEHP or 0) ~= 0 and ((s.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
 				else
 					res[i] = { ok = false, error = "group not added" }
@@ -252,6 +272,8 @@ return function(H)
 			end
 			if c.gem then
 				local gi = c.group or build.mainSocketGroup
+				local g0 = build.skillsTab.socketGroupList[gi]
+				local full = g0 and supportCount(g0) >= MAXSUP and string.format("보조 칸 가득 (%d/%d)", supportCount(g0), MAXSUP) or nil
 				local g = addGem(gi, c.gem, c.level, c.quality)
 				if g and g.gemList[#g.gemList].nameSpec == c.gem then
 					H.recalc()
@@ -260,7 +282,7 @@ return function(H)
 					build.skillsTab:ProcessSocketGroup(g)
 					build.buildFlag = true
 					H.recalc()
-					res[i] = { ok = true, stats = s,
+					res[i] = { ok = true, stats = s, problems = problems(s, b, full),
 						dpsPct = pctD(s, b),
 						ehpPct = (b.TotalEHP or 0) ~= 0 and ((s.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
 				else
@@ -296,7 +318,7 @@ return function(H)
 			local ok, out = pcall(calcFunc, ov, true)
 			if ok and out then
 				local s = stats(out)
-				res[i] = { ok = true, stats = s, points = info.points,
+				res[i] = { ok = true, stats = s, points = info.points, problems = problems(s, b),
 					dpsPct = pctD(s, b),
 					ehpPct = (b.TotalEHP or 0) ~= 0 and ((s.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
 			else
@@ -333,6 +355,9 @@ return function(H)
 		local eb = mainBase.TotalEHP or 0
 		local function pct(a, b) return b ~= 0 and (a - b) / b * 100 or nil end
 		local res = {}
+		local nsup = supportCount(g)
+		local full = nsup >= MAXSUP and string.format("보조 칸 가득 (%d/%d)", nsup, MAXSUP) or nil
+		local bS = stats(mainBase)
 		for _, gd in ipairs(cands) do
 			g.gemList[#g.gemList+1] = { nameSpec = gd.name, gemId = gd.id, skillId = gd.grantedEffectId, gemData = gd, level = gd.naturalMaxLevel or 1,
 				quality = 0, count = 1, enabled = true, enableGlobal1 = true, enableGlobal2 = true, corrupted = false, corruptLevel = 0 }
@@ -344,12 +369,12 @@ return function(H)
 			build.skillsTab:ProcessSocketGroup(g)
 			res[#res+1] = { name = gd.name, lineage = gd.grantedEffect.isLineage or false, ok = ok1 and ok2,
 				skillPct = ok1 and pct(dpsOf(so), sb) or nil, mainPct = ok2 and pct(dpsOf(mo), mb) or nil,
-				ehpPct = ok2 and mo and pct(mo.TotalEHP or 0, eb) or nil }
+				ehpPct = ok2 and mo and pct(mo.TotalEHP or 0, eb) or nil, problems = ok2 and mo and problems(stats(mo), bS, full) or nil }
 		end
 		build.skillsTab:ProcessSocketGroup(g)
 		build.buildFlag = true
 		H.recalc()
-		return { ok = true, group = gi, skillDPS = sb, mainDPS = mb, isMain = gi == build.mainSocketGroup, options = res }
+		return { ok = true, group = gi, supports = nsup, maxSupports = MAXSUP, skillDPS = sb, mainDPS = mb, isMain = gi == build.mainSocketGroup, options = res }
 	end
 
 	-- what each piece of the build is worth: take it out alone (item slot, tree node, gem) and measure
@@ -458,6 +483,17 @@ return function(H)
 					return { nodes = findNodes(r.text, r.limit) }
 				elseif r.op == "uniques" then
 					return { uniques = uniques(r.slot) }
+				elseif r.op == "reservations" then
+					local env = build.calcsTab.mainEnv
+					local out = {}
+					for _, sk in ipairs(env and env.player.activeSkillList or {}) do
+						local v = sk.skillData and sk.skillData.SpiritReservedBase
+						if v and v > 0 then
+							local g = sk.socketGroup
+							out[#out+1] = { skill = sk.activeEffect.grantedEffect.name, spirit = v, group = g and g.label or g and g.displayLabel, slot = g and g.slot, enabled = g and g.enabled, mult = sk.skillModList:More(sk.skillCfg, "ReservationMultiplier") }
+						end
+					end
+					return { reservations = out, spirit = build.calcsTab.mainOutput.Spirit, unreserved = build.calcsTab.mainOutput.SpiritUnreserved }
 				elseif r.op == "contrib" then
 					return contrib(r.parts)
 				elseif r.op == "supportOptions" then
