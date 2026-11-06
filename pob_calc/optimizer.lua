@@ -138,7 +138,7 @@ function O.run(H, opt)
 			improved, rounds = false, rounds + 1
 			for idx = 1, #gemList do
 				local g = gemList[idx]
-				if g.gemData and g.gemData.grantedEffect.support then
+				if g.gemData and g.gemData.grantedEffect.support and not (opt.lockedGems and opt.lockedGems[g.nameSpec]) then
 					local calcFunc = fresh()
 					local cur = current()
 					local best, bestS = nil, cur * 1.002
@@ -158,7 +158,7 @@ function O.run(H, opt)
 		-- 3) drop supports that hurt (e.g. lineage gems that want few supports)
 		for idx = #gemList, 1, -1 do
 			local g = gemList[idx]
-			if g.gemData and g.gemData.grantedEffect.support then
+			if g.gemData and g.gemData.grantedEffect.support and not (opt.lockedGems and opt.lockedGems[g.nameSpec]) then
 				local cur = current()
 				g.enabled = false
 				build.skillsTab:ProcessSocketGroup(mainGroup)
@@ -310,6 +310,36 @@ function O.run(H, opt)
 		local function isTravel(x) return x.type == "Normal" and not x.ascendancyName and (x.allocMode or 0) == 0 end
 		local keepMode = spec.allocMode
 		spec.allocMode = 0
+		-- mechanics the build runs on (charges, rage, ...). PoB's settings simply assume them, so the nodes that
+		-- actually generate them look worthless. A removal that takes out every generator is measured with the
+		-- mechanic switched off, which is what would happen in the game.
+		local mechs = opt.mechs or {}
+		local function killed(set)
+			local out = {}
+			for _, m in ipairs(mechs) do
+				if (m.others or 0) == 0 and m.nodes and #m.nodes > 0 then
+					local all, any = true, false
+					for _, id in ipairs(m.nodes) do
+						local nn = spec.nodes[tonumber(id)]
+						if nn and nn.alloc then any = true if not set[nn] then all = false break end end
+					end
+					if all and any then out[#out+1] = m end
+				end
+			end
+			return out
+		end
+		local function evalOff(ms, ov)
+			local tab, saved = build.configTab, {}
+			for _, m in ipairs(ms) do for k in pairs(m.config or {}) do if saved[k] == nil then saved[k] = { v = tab.input[k] } end end end
+			for _, m in ipairs(ms) do for k, v in pairs(m.config or {}) do tab.input[k] = v end end
+			tab:BuildModList() build.buildFlag = true H.recalc()
+			local cf = build.calcsTab:GetMiscCalculator()
+			local ok, out = pcall(cf, ov, false)
+			for k, sv in pairs(saved) do tab.input[k] = sv.v end
+			tab:BuildModList() build.buildFlag = true H.recalc()
+			return ok and out or nil
+		end
+		local function names(ms) local t = {} for _, m in ipairs(ms) do t[#t+1] = m.name or m.key end return table.concat(t, ", ") end
 		local function allocDeg(x, gone)
 			local d = 0
 			for _, o in ipairs(x.linked or {}) do if o.alloc and not gone[o] and not o.ascendancyName then d = d + 1 end end
@@ -340,7 +370,10 @@ function O.run(H, opt)
 					local set, list = spur(n)
 					local dep = 0 for _ in pairs(n.depends or {}) do dep = dep + 1 end
 					if dep <= 1 then
-						local okc, out = pcall(calcFunc, { removeNodes = set }, false)
+						local km = killed(set)
+						local okc, out
+						if #km > 0 then out = evalOff(km, { removeNodes = set }) okc = out ~= nil calcFunc = fresh()
+						else okc, out = pcall(calcFunc, { removeNodes = set }, false) end
 						if okc and out then
 							local sr = score(out)
 							rems[#rems+1] = { n = n, set = set, list = list, pts = #list, s = sr, loss = (sr > 0 and math.log(cur / sr) or 99) }
@@ -393,10 +426,21 @@ function O.run(H, opt)
 			local best, bestS = nil, cur * 1.003
 			for k = 1, math.min(8, #pairs_) do
 				local pr = pairs_[k]
-				local okc, out = pcall(calcFunc, { removeNodes = pr.rm.set, addNodes = pr.ad.add }, false)
-				if okc and out then local sc = score(out) if sc > bestS then best, bestS = pr, sc end end
+				local km = killed(pr.rm.set)
+				local okc, out
+				if #km > 0 then out = evalOff(km, { removeNodes = pr.rm.set, addNodes = pr.ad.add }) okc = out ~= nil calcFunc = fresh()
+				else okc, out = pcall(calcFunc, { removeNodes = pr.rm.set, addNodes = pr.ad.add }, false) end
+				if okc and out then
+					local sc = score(out)
+					if #km > 0 then note("  plan -%s +%s would drop %s: %.0f vs %.0f", table.concat(pr.rm.names, "+"), tostring(pr.ad.n.dn), names(km), sc, cur) end
+					if sc > bestS then best, bestS = pr, sc best.km = km end
+				end
 			end
 			if not best then break end
+			if best.km and #best.km > 0 then
+				for _, m in ipairs(best.km) do H.applyConfig(m.config) end
+				note("mechanic dropped: %s (its last generator was removed; PoB now calculates without it)", names(best.km))
+			end
 			local w1b, w2b = wsUsed()
 			for i = #best.rm.list, 1, -1 do local x = best.rm.list[i] if x.alloc then spec:DeallocNode(x) end end
 			spec:BuildAllDependsAndPaths()
@@ -531,6 +575,7 @@ function O.run(H, opt)
 	end
 	local function uniquesFor(slotName)
 		local list = {}
+		if opt.lockedSlots and opt.lockedSlots[slotName] then return list end   -- this slot makes a mechanic the build runs on
 		for _, item in pairs(main.uniqueDB.list) do
 			local p = slotOf(item)
 			local fits = (p == slotName) or (slotName == "Ring 2" and p == "Ring 1") or (slotName:match("^Jewel") and item.type == "Jewel")

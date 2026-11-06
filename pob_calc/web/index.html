@@ -154,7 +154,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
   <div id="main">
     <div class="side" id="left">
       <div class="tabs" id="tabs">
-        <button data-t="port" class="on">연결</button><button data-t="passive">패시브</button><button data-t="unique">고유템</button><button data-t="gem">보조젬</button><button data-t="loop">고리 찾기</button><button data-t="opt">최적화</button>
+        <button data-t="port" class="on">연결</button><button data-t="mech">메커니즘</button><button data-t="passive">패시브</button><button data-t="unique">고유템</button><button data-t="gem">보조젬</button><button data-t="loop">고리 찾기</button><button data-t="opt">최적화</button>
       </div>
       <div id="palette"></div>
     </div>
@@ -1461,6 +1461,184 @@ async function renderWhy(P) {
   $("#whyRes").innerHTML = `<h3 style="margin:8px 0 4px">카드를 하나씩 빼면</h3>${cardRows || '<div class="small">기여도 계산 중이에요. 잠시 뒤 다시 눌러 주세요.</div>'}
     <h3 style="margin:10px 0 4px">계산에 들어간 조건을 하나씩 끄면</h3>${condRows || '<div class="small">켜진 조건이 없어요.</div>'}`;
 }
+// ------------------------------------------------------------------ build mechanics
+// What the build actually runs on. PoB's settings simply assume conditions like "I have max power charges", so a
+// node that only generates them shows 0% in a plain remove-and-recalculate. Here every assumed condition is
+// switched off alone to see how much damage rests on it, and the cards around it are sorted into the ones that
+// make it, the ones that use or scale it, and the ones whose value PoB cannot see because they only make it.
+let MECH = null;
+const RES_KEYS = { PowerCharge: ["PowerCharges", "PowerChargesMax"], FrenzyCharge: ["FrenzyCharges", "FrenzyChargesMax"], EnduranceCharge: ["EnduranceCharges", "EnduranceChargesMax"], Rage: ["Rage", "MaximumRage"] };
+const DMG_KO = { Physical: "물리", Cold: "냉기", Fire: "화염", Lightning: "번개", Chaos: "카오스" };
+function mechConds() {
+  const ps = portState(cards());
+  return Object.keys(G.ports).filter((p) => ps.active[p] && G.ports[p].config && Object.keys(G.ports[p].config).length).map((p) => {
+    const cfg = {}; Object.entries(G.ports[p].config).forEach(([k, v]) => (cfg[k] = typeof v === "number" ? 0 : false));
+    return { key: p, config: cfg };
+  });
+}
+async function ensureMech() {
+  const key = JSON.stringify(S.stats) + "|" + S.mainGroup;
+  if (MECH && MECH.key === key) return MECH;
+  const conds = mechConds();
+  const r = await api({ op: "mechanics", conds });
+  if (!r.ok) return null;
+  const list = cards().filter((c) => !c.off && !c.virtual && c.ent);
+  const mechs = (r.results || []).filter((x) => x.dpsPct != null && (x.dpsPct <= -1 || (x.ehpPct ?? 0) <= -3)).sort((a, b) => a.dpsPct - b.dpsPct).map((x) => {
+    const cfg = conds.find((c) => c.key === x.key).config;
+    const makers = list.filter((c) => (c.ent.out || []).includes(x.key));
+    const users = list.filter((c) => (c.ent.in || []).includes(x.key) && !makers.includes(c));
+    const rk = RES_KEYS[x.key];
+    const amount = rk && r.resources ? { cur: r.resources[rk[0]], max: r.resources[rk[1]] } : null;
+    return { ...x, name: PN(x.key), config: cfg, makers, users, amount };
+  });
+  MECH = { key, mechs, profile: r.profile || {}, resources: r.resources || {} };
+  return MECH;
+}
+// what the optimiser must respect: a mechanic dies when its last generator goes, and is then measured switched off
+function mechForOpt() {
+  if (!MECH) return {};
+  const strong = MECH.mechs.filter((m) => m.dpsPct <= -3);
+  return {
+    mechs: strong.map((m) => ({ key: m.key, name: m.name, config: m.config, nodes: m.makers.filter((c) => c.node).map((c) => c.node.id), others: m.makers.filter((c) => !c.node).length })),
+    lockedGems: [...new Set(strong.flatMap((m) => m.makers.filter((c) => c.gem && c.kind === "support").map((c) => c.en)))],
+    lockedSlots: [...new Set(strong.flatMap((m) => m.makers.filter((c) => c.slot && !c.gem).map((c) => c.slot)))],
+  };
+}
+function mechSummary(M) {
+  const f = (v) => (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1));
+  const eng = M.mechs.filter((m) => m.dpsPct <= -3).map((m) => `${m.name}(피해의 ${f(-m.dpsPct)}%)`).join(" · ");
+  const p = M.profile, hit = p.hit || {}, tot = Object.values(hit).reduce((a, b) => a + b, 0);
+  const mix = tot ? Object.entries(hit).sort((a, b) => b[1] - a[1]).filter(([, v]) => v / tot >= 0.05).map(([k, v]) => `${DMG_KO[k] || k} ${Math.round(v / tot * 100)}%`).join(" · ") : "";
+  const dot = p.dotDPS && p.hitDPS ? p.dotDPS / (p.dotDPS + p.hitDPS) : 0;
+  const crit = p.critChance != null && p.critChance >= 30 ? `치명타 ${Math.round(p.critChance)}% × ${(+p.critMulti || 0).toFixed(1)}배` : "";
+  return { eng, mix, crit, dot: dot >= 0.1 ? `지속 피해 ${Math.round(dot * 100)}%` : "", speed: p.speed ? `초당 ${(+p.speed).toFixed(2)}회` : "", proj: p.projectiles > 1 ? `투사체 ${p.projectiles}개` : "" };
+}
+async function renderMech(P) {
+  P.innerHTML = `<div class="small">PoB 설정이 "있다고 가정"하는 조건을 하나씩 꺼서, 이 빌드의 피해가 무엇에 기대고 있는지 찾는 중이에요…</div>`;
+  const M = await ensureMech();
+  if (!M || tab !== "mech") return;
+  const sm = mechSummary(M);
+  const f = (v) => (v == null ? "-" : (v > 0 ? "+" : "") + (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1)) + "%");
+  let h = `<div class="item"><div class="n">이 빌드의 엔진</div><div class="s">${esc(sm.eng || "특정 조건에 크게 기대지 않는 빌드예요 (기본 능력치형)")}</div>
+    <div class="small" style="margin-top:4px">${esc([sm.mix && "피해 구성: " + sm.mix, sm.crit, sm.dot, sm.speed, sm.proj].filter(Boolean).join(" · "))}</div>
+    <div class="small" style="margin-top:4px;color:var(--dim)">숫자는 그 조건을 껐을 때 주 스킬 피해가 줄어드는 비율이에요. 최적화는 이 메커니즘을 만드는 노드·보조젬·장비를 지키고, 마지막 생성원을 빼는 변경은 그 조건이 꺼진 상태로 계산해서 판단해요.</div></div>`;
+  M.mechs.forEach((m) => {
+    const contrib = (c) => { const x = CONTRIB[c.key]; return x && x.dpsPct != null ? x.dpsPct : null; };
+    const hidden = m.makers.filter((c) => { const v = contrib(c); return v != null && Math.abs(v) < 0.5; });
+    const nm = (arr) => arr.slice(0, 10).map((c) => { const v = contrib(c); return `${esc(c.name)}${v != null && Math.abs(v) >= 0.5 ? ` <span class="small">(${f(v)})</span>` : ""}`; }).join(", ") + (arr.length > 10 ? ` 외 ${arr.length - 10}` : "");
+    const amt = m.amount && m.amount.max != null ? ` · 지금 ${m.amount.cur ?? "?"} / 최대 ${m.amount.max}` : "";
+    h += `<div class="item" style="margin-top:6px"><div class="n">${esc(m.name)} <span class="chip down">피해 ${f(m.dpsPct)}</span>${(m.ehpPct ?? 0) <= -1 ? ` <span class="chip down">생존 ${f(m.ehpPct)}</span>` : ""}<span class="small">${esc(amt)}</span></div>
+      <div class="s"><b>만드는 것</b> ${m.makers.length ? nm(m.makers) : '<span style="color:#ff8a7a">⚠ 빌드 안에 없음: PoB 설정으로만 켜져 있어요. 실제 게임에서는 유지되지 않을 수 있어요</span>'}</div>
+      <div class="s"><b>쓰는·키우는 것</b> ${m.users.length ? nm(m.users) : "없음"}</div>
+      ${hidden.length ? `<div class="s" style="color:#e5b94e">PoB에서 0%로 보이지만 이 메커니즘을 만드는 카드: ${esc(hidden.map((c) => c.name).join(", "))}. 이걸 다 빼면 ${esc(m.name)}이(가) 사라져 피해 ${f(m.dpsPct)}가 돼요.</div>` : ""}</div>`;
+  });
+  const minor = (MECH.mechs.length === 0) ? '<div class="small" style="margin-top:6px">켜진 조건 중 피해에 1% 이상 영향을 주는 것이 없어요.</div>' : "";
+  P.innerHTML = h + minor + `<div id="fillBox" style="margin-top:10px"><div class="small">조건을 충족하면 얼마나 오르는지, 충족시키는 방법을 찾는 중…</div></div>`;
+  renderFill();
+}
+// Conditions the build's own cards ask for but is not getting (or only gets because PoB's setting says so):
+// what the condition is worth when met, and every passive / unique / gem outside the build that would make it,
+// each measured by PoB with the condition met.
+let FILL = null;
+function onCfg(p) { const cfg = {}; Object.entries(G.ports[p].config).forEach(([k, v]) => (cfg[k] = truthy(ORIG[k]) ? ORIG[k] : v)); return cfg; }
+async function ensureFill() {
+  const key = JSON.stringify(S.stats) + "|" + S.mainGroup + "|" + S.nodes.length;
+  if (FILL && FILL.key === key) return FILL;
+  const ps = portState(cards());
+  const list = cards().filter((c) => !c.off && !c.virtual && c.ent);
+  const conds = [];
+  Object.entries(G.ports).forEach(([p, d]) => {
+    if (!d.config || !Object.keys(d.config).length) return;
+    const users = list.filter((c) => (c.ent.in || []).includes(p));
+    if (!users.length) return;
+    const makers = list.filter((c) => (c.ent.out || []).includes(p));
+    const m = MECH && MECH.mechs.find((x) => x.key === p);
+    if (!ps.active[p]) conds.push({ key: p, state: makers.length ? "setting" : "off", users, makers });
+    else if (!makers.length && m) conds.push({ key: p, state: "configOnly", users, makers, gain: -m.dpsPct });
+  });
+  if (!conds.length) { FILL = { key, conds: [] }; return FILL; }
+  // worth of each condition that is off: one PoB recalc with it switched on
+  const off = conds.filter((c) => c.state !== "configOnly");
+  if (off.length) {
+    const r = await api({ op: "mechanics", conds: off.map((c) => ({ key: c.key, config: onCfg(c.key) })) }, true);
+    if (r.ok) (r.results || []).forEach((x, i) => { off[i].gain = x.dpsPct; off[i].ehp = x.ehpPct; });
+  }
+  const keep = conds.filter((c) => (c.gain ?? 0) >= 1 || (c.ehp ?? 0) >= 3).sort((a, b) => (b.gain ?? 0) - (a.gain ?? 0)).slice(0, 8);
+  // ways to make it: producers outside the build
+  const haveGem = new Set(S.skills.flatMap((g) => g.gems.map((x) => x.name)));
+  const haveNode = new Set(S.nodes.map((n) => "node:" + n.id));
+  const haveUniq = new Set(S.items.filter((i) => i.rarity === "UNIQUE").map((i) => "unique:" + short(i.name)));
+  if (!uniqCache) { const r = await api({ op: "uniques" }, true); uniqCache = r.uniques || []; }
+  const uslot = Object.fromEntries(uniqCache.map((u) => [u.name, u.slot]));
+  for (const c of keep) {
+    if (c.state === "setting") continue;   // the build already makes it: only the setting is off
+    const ways = [];
+    Object.entries(G.entities).forEach(([id, e]) => {
+      if (e.k === "ascendancy" || !(e.out || []).includes(c.key)) return;
+      if (id.startsWith("gem:") ? haveGem.has(e.n) : id.startsWith("node:") ? haveNode.has(id) : haveUniq.has(id)) return;
+      const it = { id, name: EN(id), kind: e.k };
+      if (id.startsWith("node:")) it.nodeId = +id.slice(5);
+      else if (id.startsWith("unique:")) { it.unique = e.n; it.slot = uslot[e.n]; if (!it.slot) return; }
+      else if (e.k === "skill") it.addGroup = `${e.n} 20/0  1`;
+      else if (e.k === "support" || e.k === "lineage") { it.gemName = e.n; it.group = S.mainGroup; }
+      else return;
+      ways.push(it);
+    });
+    const top = ways.slice(0, 60);
+    const cand = (it) => it.nodeId ? { addNodes: [it.nodeId] } : it.unique ? { unique: it.unique, slot: it.slot } : it.gemName ? { gem: it.gemName, group: it.group } : { addGroup: it.addGroup };
+    if (top.length) {
+      // a condition PoB only assumes is measured from the build without it, so each way shows what it really adds
+      const base = c.state === "configOnly" ? Object.fromEntries(Object.entries(G.ports[c.key].config).map(([k, v]) => [k, typeof v === "number" ? 0 : false])) : undefined;
+      const r = await api({ op: "condFill", config: onCfg(c.key), baseConfig: base, candidates: top.map(cand) }, true);
+      if (r.ok) top.forEach((it, j) => (it.pv = r.results[j]));
+    }
+    const sc = (it) => (it.pv && it.pv.ok ? (it.pv.problems ? -1e6 : 0) + (it.pv.dpsPct ?? -1e9) / Math.max(1, Math.sqrt(it.pv.points || 1)) : -1e9);
+    c.ways = top.sort((x, y) => sc(y) - sc(x));
+    c.total = ways.length;
+  }
+  FILL = { key, conds: keep };
+  return FILL;
+}
+async function renderFill() {
+  const F = await ensureFill();
+  const box = $("#fillBox");
+  if (!box || tab !== "mech") return;
+  const f = (v) => (v == null ? "-" : (v > 0 ? "+" : "") + (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1)) + "%");
+  const ch = (v, k) => v == null ? "" : `<span class="chip ${v > 0.05 ? "up" : v < -0.05 ? "down" : ""}">${k} ${f(v)}</span>`;
+  if (!F.conds.length) { box.innerHTML = '<div class="item"><div class="n">충족되지 않은 조건</div><div class="s">빌드 카드가 요구하는 조건 중, 켜면 피해가 1% 이상 오르는 것이 없어요.</div></div>'; return; }
+  const W = [];
+  let h = `<div class="item"><div class="n">충족되지 않은 조건 → 충족시키는 방법</div><div class="small">빌드 안의 카드가 "~일 때" 효과를 갖고 있는데 지금 그 조건이 없는 것들이에요. 조건이 켜졌을 때의 피해 상승과, 빌드 밖에서 그 조건을 만들어 주는 카드를 PoB로 (조건이 켜진 상태로) 계산해 보여 줘요.</div></div>`;
+  F.conds.forEach((c, ci) => {
+    const st = c.state === "configOnly" ? `<span style="color:#ff8a7a">PoB 설정으로만 켜져 있음 (빌드 안에 만드는 것 없음). 아래 숫자는 이 조건이 없는 상태에서 각 카드를 더했을 때예요. 치명타율·명중처럼 스킬이 자연히 만드는 조건이면 실제로는 이미 충족됐을 수 있어요</span>` : c.state === "setting" ? `<span style="color:#e5b94e">빌드 안에 만드는 것이 있는데 PoB 설정이 꺼져 있음</span>` : "꺼져 있음";
+    h += `<div class="item" style="margin-top:6px"><div class="n">${esc(PN(c.key))} ${ch(c.gain, "충족 시 피해")} ${(c.ehp ?? 0) >= 1 ? ch(c.ehp, "생존") : ""}</div>
+      <div class="s">${st}</div>
+      <div class="s"><b>이 조건을 쓰는 카드</b> ${esc(c.users.slice(0, 8).map((u) => u.name).join(", "))}${c.users.length > 8 ? ` 외 ${c.users.length - 8}` : ""}</div>`;
+    if (c.state === "setting") {
+      h += `<div class="s"><b>만드는 것</b> ${esc(c.makers.map((m) => m.name).join(", "))}</div><div class="t" style="margin-top:4px"><span class="small">실제 게임에서 유지된다면 설정만 켜면 돼요.</span><button data-fon="${ci}">설정 켜기</button></div>`;
+    } else if (!c.ways || !c.ways.length) {
+      h += `<div class="s" style="color:var(--dim)">빌드 밖에서 이 조건을 만드는 카드를 데이터에서 찾지 못했어요.</div>`;
+    } else {
+      h += `<div class="s"><b>충족시키는 방법</b> <span class="small">(후보 ${c.total}개 중 ${c.ways.length}개 계산, 포인트 대비 좋은 순)</span></div>` + c.ways.slice(0, 6).map((it) => {
+        const i = W.push(it) - 1, pv = it.pv;
+        return `<div class="t" style="margin:3px 0 0 8px"><span><span class="n"${gemAttr(it.gemName || (it.addGroup ? it.addGroup.replace(/ 20\/0.*$/, "") : ""))}>${esc(it.name)}</span> <span class="kind" style="background:var(${KCOL[it.kind] || "--dim"})">${KNAME[it.kind] || it.kind}</span>
+          <span class="small">${pv ? (pv.ok ? ch(pv.dpsPct, "피해") + " " + ch(pv.ehpPct, "생존") + (pv.points ? ` ${pv.points}포인트` : "") : "계산 실패") : ""}</span>${probHtml(pv)}</span><button data-fadd="${i}">추가</button></div>`;
+      }).join("");
+    }
+    h += `</div>`;
+  });
+  box.innerHTML = h;
+  box.querySelectorAll("button[data-fon]").forEach((b) => b.addEventListener("click", async () => {
+    const c = F.conds[+b.dataset.fon]; override[c.key] = true; prev = S.stats; await syncConfig();
+  }));
+  box.querySelectorAll("button[data-fadd]").forEach((b) => b.addEventListener("click", async () => {
+    const it = W[+b.dataset.fadd];
+    prev = S.stats;
+    const ops = it.nodeId ? { addNodes: [it.nodeId] } : it.unique ? { equip: [{ slot: it.slot, unique: it.unique }] } : it.gemName ? { addGem: { name: it.gemName, group: it.group } } : { addGroup: it.addGroup };
+    const snap0 = snapIds();
+    const r = await api({ op: "apply", ...ops });
+    if (r.ok) { S = r.state; await syncConfig(); markNew(snap0); }
+  }));
+}
 // ------------------------------------------------------------------ optimiser
 // PoB's own greedy search on the loaded build: best supports for the main skill, passive swaps (refund the weakest
 // notable and its travel nodes, spend the points on a better one), optionally spirit skills and uniques.
@@ -1474,6 +1652,8 @@ function renderOpt(P) {
     ${ck("o_spirit", "유지 스킬 추가 (남는 정신력 안에서만)", false, "정신력이 남을 때만 오라·전령 같은 유지 스킬을 추가합니다")}
     ${ck("o_uniq", "고유 장비 교체", false, "슬롯마다 모든 고유템을 넣어 봅니다 (오래 걸림)")}
     ${ck("o_ehp", "유효 생명력은 지금보다 낮추지 않기", true, "끄면 피해만 봅니다")}
+    ${ck("o_mech", "빌드 메커니즘 지키기 (메커니즘 탭 분석 사용)", true, "충전·격노처럼 빌드가 기대는 조건을 만드는 노드·보조젬·장비를 지키고, 마지막 생성원을 빼는 변경은 그 조건이 꺼진 상태로 계산합니다")}
+    ${MECH ? `<div class="small" style="margin:4px 0">엔진: ${esc(mechSummary(MECH).eng || "없음")}</div>` : ""}
     <div class="t" style="margin:8px 0"><button id="o_go">최적화 시작</button>${optUndo.length ? '<button id="o_undo">되돌리기</button>' : ""}</div><div id="o_res"></div>`;
   $("#o_go").addEventListener("click", runOpt);
   const u = $("#o_undo"); if (u) u.addEventListener("click", async () => { const code = optUndo.pop(); optResult = null; await loadBuild(code); setTab("opt"); });
@@ -1487,6 +1667,10 @@ async function runOpt() {
   if ($("#o_uniq").checked) phases.push("uniques");
   if (!phases.length) return;
   const options = { phases, maxSpiritSkills: 2 };
+  if ($("#o_mech") && $("#o_mech").checked) {
+    $("#o_res").innerHTML = '<div class="small">먼저 빌드 메커니즘을 파악하는 중…</div>';
+    if (await ensureMech()) Object.assign(options, mechForOpt());
+  }
   if (!$("#o_ehp").checked) options.ehpWeight = 0;
   $("#o_go").disabled = true;
   $("#o_res").innerHTML = '<div class="small">최적화 중… 보통 1~3분 걸려요 (고유 장비까지 켜면 더 오래).</div>';
@@ -1572,6 +1756,7 @@ async function renderPalette() {
   if (tab === "loop") return renderLoops(P);
   if (tab === "opt") return renderOpt(P);
   if (tab === "why") return renderWhy(P);
+  if (tab === "mech") return renderMech(P);
   if (tab === "port") {
     const opts = Object.keys(G.ports).sort((a, b) => PN(a).localeCompare(PN(b), "ko")).map((k) => `<option value="${k}" ${portFilter && portFilter.port === k ? "selected" : ""}>${esc(PN(k))}</option>`).join("");
     const head = `<div class="row"><select id="pf"><option value="">연결 종류 선택…</option>${opts}</select><select id="pd"><option value="out" ${portFilter && portFilter.dir === "in" ? "selected" : ""}>만드는 것</option><option value="in" ${portFilter && portFilter.dir === "out" ? "selected" : ""}>쓰는 것</option></select></div>

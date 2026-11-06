@@ -531,8 +531,10 @@ return function(H)
 					o.ehpTarget = o.ehpTarget or (b.TotalEHP or 40000)
 					o.iterations = o.iterations or 2
 					if o.lockedNodes then o.locked = {} for _, id in ipairs(o.lockedNodes) do o.locked[tonumber(id)] = true end end
+					if o.lockedGems then local t = {} for _, n in ipairs(o.lockedGems) do t[n] = true end o.lockedGems = t end
+					if o.lockedSlots then local t = {} for _, n in ipairs(o.lockedSlots) do t[n] = true end o.lockedSlots = t end
 					local O = dofile(H.here .. "/optimizer.lua")
-					local okO, res = xpcall(function() return O.run({ recalc = H.recalc, warn = H.warn }, o) end, debug.traceback)
+					local okO, res = xpcall(function() return O.run({ recalc = H.recalc, warn = H.warn, applyConfig = H.applyConfig }, o) end, debug.traceback)
 					H.recalc()
 					local a = cur()
 					-- checks on the result: nothing newly cut off from the start, points within what the build had,
@@ -557,6 +559,64 @@ return function(H)
 					}
 					return { state = state(), undo = undo, before = b, after = a, dpsPct = pctD(a, b), problems = problems(a, b), checks = checks,
 						log = okO and res.log or { tostring(res) }, seconds = okO and res.seconds or nil }
+				elseif r.op == "mechanics" then
+					-- what the build runs on: every condition PoB is assuming, switched off alone (how much damage rests on it),
+					-- the PoB numbers behind charges / rage, and how the main skill's hit is made up
+					local tab = build.configTab
+					local b = cur()
+					local res = {}
+					for i, c in ipairs(r.conds or {}) do
+						local saved = {}
+						for k in pairs(c.config or {}) do saved[k] = { v = tab.input[k] } end
+						H.applyConfig(c.config)
+						H.recalc()
+						local x = cur()
+						for k, sv in pairs(saved) do tab.input[k] = sv.v end
+						tab:BuildModList() build.buildFlag = true
+						res[i] = { key = c.key, dpsPct = pctD(x, b), ehpPct = (b.TotalEHP or 0) ~= 0 and ((x.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
+					end
+					H.recalc()
+					local o = build.calcsTab.mainOutput or {}
+					local res2 = {}
+					for k, v in pairs(o) do
+						if type(v) == "number" and v == v and v ~= math.huge and (k:match("Charges") or k:match("Rage") or k:match("Infusion") or k:match("Remnant") or k:match("Glory") or k:match("Combo"))
+							and not k:match("Duration") and not k:match("Chance") then res2[k] = v end
+					end
+					local hit = {}
+					for _, t in ipairs({ "Physical", "Lightning", "Cold", "Fire", "Chaos" }) do
+						local v = o[t .. "HitAverage"]
+						if type(v) ~= "number" and o.MainHand then v = o.MainHand[t .. "HitAverage"] end
+						if type(v) == "number" and v > 0 then hit[t] = v end
+					end
+					local prof = { hit = hit, critChance = o.CritChance, critMulti = o.CritMultiplier, critEffect = o.CritEffect, speed = o.Speed,
+						hitDPS = o.TotalDPS, dotDPS = (o.TotalDot or 0) + (o.BleedDPS or 0) + (o.IgniteDPS or 0) + (o.PoisonDPS or 0), projectiles = o.ProjectileCount,
+						ignite = o.IgniteDPS, bleed = o.BleedDPS, poison = o.PoisonDPS, minion = o.Minion and o.Minion.CombinedDPS or nil }
+					return { results = res, resources = res2, profile = prof }
+				elseif r.op == "condFill" then
+					-- a condition the build is not getting yet: switch it on, and measure each way of getting it with it on,
+					-- every number against the build as it is now (condition off)
+					local tab = build.configTab
+					local saved = {}
+					for k in pairs(r.config or {}) do saved[k] = { v = tab.input[k] } end
+					for k in pairs(r.baseConfig or {}) do saved[k] = saved[k] or { v = tab.input[k] } end
+					if r.baseConfig then H.applyConfig(r.baseConfig) H.recalc() end   -- the build as it really is: condition not met
+					local b0 = cur()
+					H.applyConfig(r.config or {})
+					H.recalc()
+					local on = cur()
+					local pr = preview(r.candidates or {})
+					for k, sv in pairs(saved) do tab.input[k] = sv.v end
+					tab:BuildModList() build.buildFlag = true
+					H.recalc()
+					for _, x in ipairs(pr.results or {}) do
+						if x.ok and x.stats then
+							x.dpsPct = pctD(x.stats, b0)
+							x.ehpPct = (b0.TotalEHP or 0) ~= 0 and ((x.stats.TotalEHP or 0) - b0.TotalEHP) / b0.TotalEHP * 100 or nil
+							x.problems = problems(x.stats, b0)
+							x.stats = nil
+						end
+					end
+					return { onPct = pctD(on, b0), onEhp = (b0.TotalEHP or 0) ~= 0 and ((on.TotalEHP or 0) - b0.TotalEHP) / b0.TotalEHP * 100 or nil, results = pr.results }
 				elseif r.op == "condContrib" then
 					-- each condition the calculation assumes (a PoB config setting): switch it off alone, recalc, measure, restore
 					local tab = build.configTab
