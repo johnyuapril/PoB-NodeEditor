@@ -121,7 +121,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
   <div id="main">
     <div class="side" id="left">
       <div class="tabs" id="tabs">
-        <button data-t="port" class="on">연결</button><button data-t="passive">패시브</button><button data-t="unique">고유템</button><button data-t="gem">보조젬</button>
+        <button data-t="port" class="on">연결</button><button data-t="passive">패시브</button><button data-t="unique">고유템</button><button data-t="gem">보조젬</button><button data-t="loop">고리 찾기</button>
       </div>
       <div id="palette"></div>
     </div>
@@ -919,9 +919,92 @@ function bindAdd() {
 }
 function slotForUnique(u) { return u.slot === "Ring 1" ? "Ring 1" : u.slot; }
 let uniqCache = null, gemCache = null, gemTarget = null, supCache = null;
+// ------------------------------------------------------------------ loop finder
+// Every passive, unique, support and skill not in the build that would close a loop with what is already there:
+// some card A gives X an input, X gives some card B an input, and B already reaches A through the build's links.
+let loopCache = null;
+async function findLoops() {
+  const build = cards().filter((c) => !c.off && c.ent && !c.virtual);
+  const mech = (p) => G.ports[p] && !G.ports[p].common && !p.startsWith("stat:");
+  const prodB = {}, consB = {};
+  build.forEach((c) => { portsOf(c).outs.filter(mech).forEach((p) => (prodB[p] = prodB[p] || []).push(c)); portsOf(c).ins.filter(mech).forEach((p) => (consB[p] = consB[p] || []).push(c)); });
+  // reach[b] = build cards b reaches through mechanic links
+  const adj = new Map(build.map((c) => [c.key, new Set()]));
+  Object.entries(prodB).forEach(([p, ps]) => (consB[p] || []).forEach((b) => ps.forEach((a) => { if (a !== b && linkOK(a, b, p)) adj.get(a.key).add(b.key); })));
+  const reach = (k) => { const seen = new Set([k]), q = [k]; while (q.length) adj.get(q.shift()).forEach((n) => { if (!seen.has(n)) { seen.add(n); q.push(n); } }); return seen; };
+  const R = {}; build.forEach((c) => (R[c.key] = reach(c.key)));
+  const haveGem = new Set(S.skills.flatMap((g) => g.gems.map((x) => x.name)));
+  const haveNode = new Set(S.nodes.map((n) => "node:" + n.id));
+  const haveUniq = new Set(S.items.filter((i) => i.rarity === "UNIQUE").map((i) => "unique:" + short(i.name)));
+  if (!uniqCache) { const r = await api({ op: "uniques" }); uniqCache = r.uniques || []; }
+  const uslot = Object.fromEntries(uniqCache.map((u) => [u.name, u.slot]));
+  const out = [];
+  Object.entries(G.entities).forEach(([id, e]) => {
+    if (e.k === "ascendancy") return;
+    if (id.startsWith("gem:") ? haveGem.has(e.n) : id.startsWith("node:") ? haveNode.has(id) : haveUniq.has(id)) return;
+    const ins = e.in.filter(mech), outs = e.out.filter(mech);
+    if (!ins.length || !outs.length) return;
+    const loops = [];
+    ins.forEach((p) => (prodB[p] || []).forEach((a) => {
+      const grp = a.gem ? a.gem.group : S.mainGroup;
+      const x = { key: "cand", kind: e.k, ent: e, gem: (e.k === "support" || e.k === "lineage") ? { group: grp } : null };
+      if (!linkOK(a, x, p)) return;
+      outs.forEach((q) => (consB[q] || []).forEach((b) => { if (R[b.key].has(a.key) && linkOK(x, b, q)) loops.push({ a, p, b, q, grp }); }));
+    }));
+    if (!loops.length) return;
+    const it = { id, name: EN(id), kind: e.k, loops };
+    if (id.startsWith("node:")) it.nodeId = +id.slice(5);
+    else if (id.startsWith("unique:")) { it.unique = e.n; it.slot = uslot[e.n]; if (!it.slot) return; }
+    else if (e.k === "skill") it.addGroup = `${e.n} 20/0  1`;
+    else { it.gemName = e.n; it.group = loops[0].grp; }
+    out.push(it);
+  });
+  return out;
+}
+async function renderLoops(P) {
+  P.innerHTML = `<div class="small" style="margin-bottom:6px">지금 빌드에 <b>하나만 더하면</b> 순환 고리(A가 만든 걸 새 카드가 쓰고, 새 카드가 만든 걸 B가 쓰고, B가 다시 A로 이어짐)가 생기는 후보예요. 전부 PoB로 더해 보고 피해가 많이 오르는 순으로 보여 줍니다.</div><div id="res"><div class="small">찾는 중…</div></div>`;
+  const key = JSON.stringify(S.stats) + "|" + S.nodes.length + "|" + S.skills.length;
+  if (!loopCache || loopCache.key !== key) {
+    const list = await findLoops();
+    if (tab !== "loop") return;
+    $("#res").innerHTML = `<div class="small">후보 ${list.length}개를 PoB로 계산하는 중…</div>`;
+    list.sort((x, y) => y.loops.length - x.loops.length);
+    const top = list.slice(0, 150);
+    const cand = (it) => it.nodeId ? { addNodes: [it.nodeId] } : it.unique ? { unique: it.unique, slot: it.slot } : it.gemName ? { gem: it.gemName, group: it.group } : { addGroup: it.addGroup };
+    for (let i = 0; i < top.length; i += 40) {
+      const chunk = top.slice(i, i + 40);
+      const r = await api({ op: "preview", candidates: chunk.map(cand) });
+      if (r.ok) chunk.forEach((it, j) => (it.pv = r.results[j]));
+      if (tab !== "loop") return;
+      $("#res").innerHTML = `<div class="small">후보 ${list.length}개 중 ${Math.min(i + 40, top.length)}개 계산함…</div>`;
+    }
+    const sc = (it) => (it.pv && it.pv.ok ? Math.max(it.pv.dpsPct ?? -1e9, (it.pv.ehpPct ?? -1e9) / 2) : -1e9);
+    top.sort((x, y) => sc(y) - sc(x));
+    loopCache = { key, list: top, total: list.length };
+  }
+  const ch = (v, k) => v == null ? "" : `<span class="chip ${v > 0.05 ? "up" : v < -0.05 ? "down" : ""}">${k} ${(v > 0 ? "+" : "") + v.toFixed(1)}%</span>`;
+  const L = loopCache.list;
+  $("#res").innerHTML = `<div class="small" style="margin-bottom:4px">고리를 만드는 후보 ${loopCache.total}개${loopCache.total > L.length ? ` (연결이 많은 ${L.length}개 계산)` : ""}</div>` + L.map((it, i) => {
+    const real = it.loops.some((l) => l.p !== l.q);
+    const lines = [...new Set(it.loops.slice().sort((x, y) => (y.p !== y.q) - (x.p !== x.q)).map((l) => `${l.a.name} →${PN(l.p)}→ [이것] →${PN(l.q)}→ ${l.b.name}`))];
+    const lp = lines.slice(0, 2).join("\n") + (lines.length > 2 ? `\n외 ${lines.length - 2}개` : "");
+    const pv = it.pv;
+    return `<div class="item"><div class="t"><span class="n"${gemAttr(it.gemName || (it.addGroup ? it.addGroup.replace(/ 20\/0.*$/, "") : ""))}>${esc(it.name)}</span><span class="kind" style="background:var(${KCOL[it.kind] || "--dim"})">${KNAME[it.kind] || it.kind}</span></div>
+      ${real ? '<div class="small" style="color:var(--warn)" title="받는 효과와 주는 효과가 달라서, 서로 다른 메커니즘이 맞물려 도는 고리">◆ 다른 효과끼리 맞물리는 고리</div>' : ""}<div class="s">${esc(lp)}</div>
+      <div class="t" style="margin-top:4px"><span class="small">${pv ? (pv.ok ? ch(pv.dpsPct, "피해") + " " + ch(pv.ehpPct, "생존") + (pv.points ? ` <span class="small">${pv.points}포인트</span>` : "") : "계산 실패") : "계산 안 함"}</span><button data-add="${i}">추가</button></div></div>`;
+  }).join("");
+  $("#res").querySelectorAll("button[data-add]").forEach((b) => b.addEventListener("click", async () => {
+    const it = L[+b.dataset.add];
+    prev = S.stats;
+    const ops = it.nodeId ? { addNodes: [it.nodeId] } : it.unique ? { equip: [{ slot: it.slot, unique: it.unique }] } : it.gemName ? { addGem: { name: it.gemName, group: it.group } } : { addGroup: it.addGroup };
+    const r = await api({ op: "apply", ...ops });
+    if (r.ok) { S = r.state; await syncConfig(); }
+  }));
+}
 async function renderPalette() {
   const P = $("#palette");
   if (!S) { P.innerHTML = '<div class="small">먼저 빌드를 불러오세요.</div>'; return; }
+  if (tab === "loop") return renderLoops(P);
   if (tab === "port") {
     const opts = Object.keys(G.ports).sort((a, b) => PN(a).localeCompare(PN(b), "ko")).map((k) => `<option value="${k}" ${portFilter && portFilter.port === k ? "selected" : ""}>${esc(PN(k))}</option>`).join("");
     const head = `<div class="row"><select id="pf"><option value="">연결 종류 선택…</option>${opts}</select><select id="pd"><option value="out" ${portFilter && portFilter.dir === "in" ? "selected" : ""}>만드는 것</option><option value="in" ${portFilter && portFilter.dir === "out" ? "selected" : ""}>쓰는 것</option></select></div>

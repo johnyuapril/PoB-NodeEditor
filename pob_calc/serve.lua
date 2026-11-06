@@ -233,6 +233,23 @@ return function(H)
 		local res = {}
 		-- gem candidates need a real recalc: add, measure, remove
 		for i, c in ipairs(cands or {}) do
+			if c.addGroup then
+				local list = build.skillsTab.socketGroupList
+				local n0, main = #list, list[build.mainSocketGroup]
+				local okA = pcall(setGroup, nil, c.addGroup)
+				if okA and #list > n0 then
+					H.recalc()
+					local s = cur()
+					table.remove(list, #list)
+					for gi, g in ipairs(list) do if g == main then build.mainSocketGroup = gi build.calcsTab.input.skill_number = gi end end
+					build.buildFlag = true
+					H.recalc()
+					res[i] = { ok = true, stats = s, dpsPct = pctD(s, b),
+						ehpPct = (b.TotalEHP or 0) ~= 0 and ((s.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
+				else
+					res[i] = { ok = false, error = "group not added" }
+				end
+			end
 			if c.gem then
 				local gi = c.group or build.mainSocketGroup
 				local g = addGem(gi, c.gem, c.level, c.quality)
@@ -253,7 +270,7 @@ return function(H)
 		end
 		calcFunc, baseOut = build.calcsTab:GetMiscCalculator()
 		for i, c in ipairs(cands or {}) do
-			if c.gem then goto continue_cand end
+			if c.gem or c.addGroup then goto continue_cand end
 			local ov, info = {}, {}
 			if c.addNodes then
 				ov.addNodes = {}
