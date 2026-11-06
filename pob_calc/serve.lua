@@ -493,7 +493,10 @@ return function(H)
 							out[#out+1] = { skill = sk.activeEffect.grantedEffect.name, spirit = v, group = g and g.label or g and g.displayLabel, slot = g and g.slot, enabled = g and g.enabled, mult = sk.skillModList:More(sk.skillCfg, "ReservationMultiplier") }
 						end
 					end
-					return { reservations = out, spirit = build.calcsTab.mainOutput.Spirit, unreserved = build.calcsTab.mainOutput.SpiritUnreserved }
+					local bd = env and env.player.breakdown and env.player.breakdown.SpiritReserved
+					local rows = {}
+					for _, r0 in ipairs(bd and bd.reservations or {}) do rows[#rows+1] = r0 end
+					return { breakdown = rows, reservations = out, spirit = build.calcsTab.mainOutput.Spirit, unreserved = build.calcsTab.mainOutput.SpiritUnreserved }
 				elseif r.op == "contrib" then
 					return contrib(r.parts)
 				elseif r.op == "supportOptions" then
