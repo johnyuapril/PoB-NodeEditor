@@ -93,6 +93,19 @@ return function(H)
 			class = spec.curClassName, ascendancy = spec.curAscendClassName }
 	end
 
+	-- is the tree something the game would accept: every allocated node connected to the start (PoB's own check),
+	-- points within the budget, only the chosen ascendancy
+	local function validateTree()
+		local spec = build.spec
+		local orphans, wrongAsc, keystones = {}, {}, {}
+		for id, n in pairs(spec.allocNodes) do
+			if not n.connectedToStart and n.type ~= "ClassStart" and n.type ~= "AscendClassStart" then orphans[#orphans+1] = { id = id, name = n.dn } end
+			if n.ascendancyName and spec.curAscendClass and n.ascendancyName ~= spec.curAscendClass.name then wrongAsc[#wrongAsc+1] = { id = id, name = n.dn } end
+			if n.type == "Keystone" then keystones[#keystones+1] = n.dn end
+		end
+		return { alloc = treeAlloc(), orphans = orphans, wrongAsc = wrongAsc, keystones = keystones, treeVersion = spec.treeVersion }
+	end
+
 	local function shortName(item) return (item.name or ""):match("^(.-),") or item.name end
 	local function findUnique(name)
 		for _, item in pairs(main.uniqueDB.list) do if item.name == name or shortName(item) == name then return item end end
@@ -499,6 +512,9 @@ return function(H)
 					-- greedy optimisation of the loaded build by PoB's own numbers; the old code comes back for undo
 					local _, undo = H.exportCode()
 					local b = cur()
+					local v0 = validateTree()
+					local cfg0 = {}
+					for k, v in pairs(build.configTab.input or {}) do if type(v) ~= "table" then cfg0[k] = v end end
 					local o = r.options or {}
 					o.phases = o.phases or { "supports", "treeSwap" }
 					o.points = o.points or select(1, build.spec:CountAllocNodes())
@@ -509,7 +525,25 @@ return function(H)
 					local okO, res = xpcall(function() return O.run({ recalc = H.recalc, warn = H.warn }, o) end, debug.traceback)
 					H.recalc()
 					local a = cur()
-					return { state = state(), undo = undo, before = b, after = a, dpsPct = pctD(a, b), problems = problems(a, b),
+					-- checks on the result: nothing newly cut off from the start, points within what the build had,
+					-- the same combat settings and the same PoB calculation for both sides
+					local v1 = validateTree()
+					local had = {}
+					for _, o0 in ipairs(v0.orphans) do had[o0.id] = true end
+					local newOrphans = {}
+					for _, o1 in ipairs(v1.orphans) do if not had[o1.id] then newOrphans[#newOrphans+1] = o1 end end
+					local cfgChanged = {}
+					for k, v in pairs(build.configTab.input or {}) do if type(v) ~= "table" and cfg0[k] ~= v then cfgChanged[#cfgChanged+1] = k end end
+					for k in pairs(cfg0) do if build.configTab.input[k] == nil then cfgChanged[#cfgChanged+1] = k end end
+					local checks = {
+						{ key = "connected", ok = #newOrphans == 0, detail = newOrphans },
+						{ key = "points", ok = v1.alloc.used <= math.max(v0.alloc.used, v0.alloc.usedMax), before = v0.alloc.used, after = v1.alloc.used, max = v1.alloc.usedMax },
+						{ key = "ascendancy", ok = v1.alloc.asc <= v1.alloc.ascMax and #v1.wrongAsc == 0, before = v0.alloc.asc, after = v1.alloc.asc, max = v1.alloc.ascMax },
+						{ key = "keystones", ok = true, before = v0.keystones, after = v1.keystones },
+						{ key = "config", ok = #cfgChanged == 0, detail = cfgChanged },
+						{ key = "version", ok = v0.treeVersion == v1.treeVersion, before = v0.treeVersion, after = v1.treeVersion },
+					}
+					return { state = state(), undo = undo, before = b, after = a, dpsPct = pctD(a, b), problems = problems(a, b), checks = checks,
 						log = okO and res.log or { tostring(res) }, seconds = okO and res.seconds or nil }
 				elseif r.op == "condContrib" then
 					-- each condition the calculation assumes (a PoB config setting): switch it off alone, recalc, measure, restore
@@ -528,6 +562,44 @@ return function(H)
 					end
 					H.recalc()
 					return { results = res }
+				elseif r.op == "validate" then
+					return validateTree()
+				elseif r.op == "skillInfo" then
+					-- one skill group as PoB's main skill: damage, speed, costs, reservation, how it is used/triggered
+					local list = build.skillsTab.socketGroupList
+					local gi = tonumber(r.group) or build.mainSocketGroup
+					if not list[gi] then error("no group " .. tostring(r.group)) end
+					local keep = build.mainSocketGroup
+					local function setMain(i) build.mainSocketGroup = i build.calcsTab.input.skill_number = i build.buildFlag = true H.recalc() end
+					if gi ~= keep then setMain(gi) end
+					local o = build.calcsTab.mainOutput or {}
+					local env = build.calcsTab.mainEnv
+					local ms = env and env.player and env.player.mainSkill
+					local info = { group = gi }
+					for _, k in ipairs({ "CombinedDPS", "TotalDPS", "FullDPS", "TotalDot", "MinionDPS", "AverageHit", "AverageDamage", "Speed", "HitChance", "CritChance", "CritMultiplier",
+						"ProjectileCount", "AreaOfEffectRadiusMetres", "Duration", "Cooldown", "SkillUseTime", "ManaCost", "ManaPerSecondCost", "LifeCost", "LifePerSecondCost", "ESCost", "RageCost", "SpiritUnreserved", "Spirit" }) do
+						if type(o[k]) == "number" and o[k] ~= 0 then info[k] = o[k] end
+					end
+					if ms then
+						local ge = ms.activeEffect and ms.activeEffect.grantedEffect
+						info.name = ge and ge.name
+						local types = {}
+						if ge and ge.skillTypes and SkillType then
+							for name, id in pairs(SkillType) do if ge.skillTypes[id] then types[#types+1] = name end end
+							table.sort(types)
+						end
+						info.types = types
+						local sd = ms.skillData or {}
+						info.triggered = (sd.triggered or (ms.skillFlags and ms.skillFlags.triggered)) and true or nil
+						info.triggerRate = o.SkillTriggerRate or o.TriggerRate
+						info.triggeredBy = ms.triggeredBy and ms.triggeredBy.activeEffect and ms.triggeredBy.activeEffect.grantedEffect and ms.triggeredBy.activeEffect.grantedEffect.name or nil
+						info.spirit = sd.SpiritReservedBase
+						info.flags = {}
+						for k, v in pairs(ms.skillFlags or {}) do if v == true then info.flags[#info.flags+1] = k end end
+						table.sort(info.flags)
+					end
+					if gi ~= keep then setMain(keep) end
+					return { info = info }
 				elseif r.op == "reservations" then
 					local env = build.calcsTab.mainEnv
 					local out = {}

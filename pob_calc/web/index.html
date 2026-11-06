@@ -65,9 +65,17 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card.pill { border-radius: 16px; }
 .card.off { opacity: .4; }
 .card.sel { outline: 3px solid #ff5a3d; outline-offset: 1px; }
-.card.dim { opacity: .28; }
+.card.dim { opacity: .12; } .card.pot { opacity: .45; outline: 2px dashed #8a919c; outline-offset: 2px; } .card.ind { opacity: .55; filter: saturate(.6); }
+#skillBox { display: none; background: #171b22; border: 1px solid #335a95; border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; }
+#skillBox .kv { display: flex; justify-content: space-between; gap: 8px; } #skillBox .kv span:last-child { font-variant-numeric: tabular-nums; }
 .card.newc { box-shadow: 0 0 0 3px #3dff9a, 0 0 18px 4px rgba(61,255,154,.55); }
 .card.newc .h::after { content: "새로"; font-size: 10px; font-weight: 700; color: #0b2; background: #3dff9a; color: #062; border-radius: 6px; padding: 0 5px; margin-left: 4px; }
+.card.gonec { box-shadow: 0 0 0 3px #ff5a5a, 0 0 18px 4px rgba(255,90,90,.5); }
+.card.gonec .h::after { content: "최적화로 빠짐"; font-size: 10px; font-weight: 700; background: #ff5a5a; color: #300; border-radius: 6px; padding: 0 5px; margin-left: 4px; }
+.sgem.gonec { background: rgba(255,90,90,.18); box-shadow: inset 3px 0 0 #ff5a5a; }
+#cmpBar { display: none; gap: 4px; align-items: center; padding: 2px 6px; border: 1px solid #3dff9a; border-radius: 6px; }
+#cmpBar button.on { background: #1f5c3c; border-color: #3dff9a; }
+#tCmp circle { fill: none; stroke-width: 16; pointer-events: none; } #tCmp .add { stroke: #3dff9a; } #tCmp .rm { stroke: #ff5a5a; stroke-dasharray: 30 18; }
 .sgem.newc { background: rgba(61,255,154,.18); box-shadow: inset 3px 0 0 #3dff9a; }
 .prob { color: #ff7a6b; font-size: 11px; margin-top: 3px; }
 .item.bad { opacity: .55; }
@@ -137,6 +145,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
     <label class="small"><input type="checkbox" id="hideBare" checked> 연결 없는 카드 숨기기</label>
     <label class="small" title="치명타 확률, 치명타 피해 보너스, 속도처럼 전체에 적용되는 능력치를 '전역 효과' 카드로 모아 봅니다"><input type="checkbox" id="showStats" checked> 전역 효과</label>
     <label class="small" title="PoB가 해석하지 못한 문장에서 단어로 읽은 연결(점선)을 숨깁니다"><input type="checkbox" id="hideGuess"> 추정 연결 숨기기</label><span class="small" id="hiddenInfo"></span>
+    <span id="cmpBar" title="최적화 전과 후의 빌드를 번갈아 불러와 비교합니다. 후에서는 새로 들어온 것이 초록, 전에서는 빠질 것이 빨강으로 보여요">최적화 <button data-v="before">전</button><button data-v="after">후</button></span>
     <button id="treeBtn" title="poe2db처럼 전체 패시브 트리를 보고 직접 찍습니다. 찍을 때마다 PoB가 다시 계산합니다">패시브 트리</button>
     <button id="updBtn" title="새 버전이 있으면 받아서 바로 적용합니다">업데이트</button>
     <div id="stats"></div>
@@ -148,7 +157,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
       </div>
       <div id="palette"></div>
     </div>
-    <div id="treeView"><svg id="tsvg"><g id="tE1"></g><g id="tE2"></g><g id="tHov"></g><g id="tN"></g><g id="tL"></g></svg>
+    <div id="treeView"><svg id="tsvg"><g id="tE1"></g><g id="tE2"></g><g id="tHov"></g><g id="tCmp"></g><g id="tN"></g><g id="tL"></g></svg>
       <div id="tPanel">
         <div class="row"><b style="white-space:nowrap">패시브 트리</b><span style="flex:1"></span><button id="tFit" title="전체 보기">전체</button><button id="tClose">닫기</button></div>
         <input id="tSearch" placeholder="검색 (예: 치명타, 냉기, 정신력)"><span id="tHits" class="small"></span>
@@ -161,6 +170,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
     </div>
     <div id="canvas" style="grid-column:2;grid-row:1"><div id="world"><svg id="wires"></svg></div></div>
     <div class="side" id="right">
+      <div id="skillBox"></div>
       <h3>연결 상태</h3>
       <div class="small">선 = PoB 설정. 생산자가 있으면 켜지고, 끄면 그 조건이 없는 상태로 계산합니다.</div>
       <div id="portList"></div>
@@ -536,7 +546,7 @@ function wire(s, t, color, opts) {
   const m = bez(s, c1, c2, t, 0.5), A = 7;
   const tri = [[A, 0], [-A, -A * 0.75], [-A, A * 0.75]].map(([px, py]) => `${m.x + px * Math.cos(m.a) - py * Math.sin(m.a)},${m.y + px * Math.sin(m.a) + py * Math.cos(m.a)}`).join(" ");
   const op = opts.op != null ? opts.op : opts.on ? 1 : 0.35;
-  return `<g opacity="${op}"><path d="M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}" stroke="${color}" stroke-width="${opts.w || 2}" ${opts.dash ? `stroke-dasharray="${opts.dash}"` : opts.on ? "" : 'stroke-dasharray="6 5"'} ${opts.glow ? 'filter="url(#glow)"' : ""} ${opts.port ? `data-port="${opts.port}"` : 'style="pointer-events:none"'}>${opts.title ? `<title>${esc(opts.title)}</title>` : ""}</path>
+  return `<g opacity="${op}"><path d="M${s.x},${s.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${t.x},${t.y}" stroke="${color}" stroke-width="${opts.w || 2}" ${opts.dash ? `stroke-dasharray="${opts.dash}"` : opts.on ? "" : 'stroke-dasharray="6 5"'} ${opts.glow ? 'filter="url(#glow)"' : ""} ${opts.port ? `data-port="${opts.port}"` : 'style="pointer-events:none"'} ${opts.ei != null ? `data-ei="${opts.ei}"` : ""}>${opts.title && opts.ei == null ? `<title>${esc(opts.title)}</title>` : ""}</path>
     <polygon points="${tri}" fill="${color}" style="pointer-events:none"/></g>`;
 }
 let CONSUMED = null;
@@ -547,11 +557,11 @@ function gval(p) {
   if (p === "stat:Speed" && s.Speed != null) return s.Speed.toFixed(2) + "/초";
   return "";
 }
-let SRCN = {}, FOCUS = null, statSel = null;
+let SRCN = {}, FOCUS = null, FLEV = null, FUP = null, FDOWN = null, FMAIN = false, statSel = null, EDGES = [];
 const COLX = { 2: 560, 3: 900, 4: 1240, 5: 1580 };
 const srcCount = (p) => SRCN[p] || 0;
 function render() {
-  setTimeout(treeSync, 0);
+  setTimeout(treeSync, 0); setTimeout(showSkillBox, 0);
   CONSUMED = null;
   const all = cards();
   CONSUMED = new Set(all.filter((c) => c.ent && !c.off).flatMap((c) => c.ent.in));
@@ -565,7 +575,7 @@ function render() {
   buildSockets(list);
   layout(list);
   // what to light up: a selected card (plus, after the wires are known, its whole path) or every source of one global stat
-  FOCUS = null;
+  FOCUS = null; FLEV = null; FUP = null; FDOWN = null; FMAIN = false;
   if (statSel) FOCUS = new Set(list.filter((c) => !c.off && c.ent && (c.ent.st || []).includes(statSel)).map((c) => c.key).concat(["global"]));
   else if (selected && list.some((c) => c.key === selected)) {
     const links = [];
@@ -573,12 +583,18 @@ function render() {
       if (b !== a && !b.off && portsOf(b).ins.includes(pn) && linkOK(a, b, pn) && (EMB[a.key] || a.key) !== (EMB[b.key] || b.key)) links.push([a.key, b.key]);
     })); });
     const seeds = [selected, ...(SOCK[selected] || []).map((g) => g.key)];
-    const walk = (from, to) => { const seen = new Set(seeds), q = [...seeds]; while (q.length) { const k = q.shift(); links.forEach((l) => { if (l[from] === k && !seen.has(l[to])) { seen.add(l[to]); q.push(l[to]); } }); } return seen; };
-    FOCUS = new Set([...walk(0, 1), ...walk(1, 0)]);
+    // breadth-first, so every card knows how many steps it is from the selection: 1 = feeds it (or is fed by it) directly
+    FLEV = new Map(seeds.map((k) => [k, 0]));
+    const walk = (from, to) => { const d = new Map(seeds.map((k) => [k, 0])), q = [...seeds]; while (q.length) { const k = q.shift(); links.forEach((l) => { if (l[from] === k && !d.has(l[to])) { d.set(l[to], d.get(k) + 1); q.push(l[to]); } }); } return d; };
+    FUP = walk(1, 0); FDOWN = walk(0, 1);   // up: what feeds the selection; down: what the selection feeds
+    [FUP, FDOWN].forEach((d) => d.forEach((v, k) => { if (!FLEV.has(k) || FLEV.get(k) > v) FLEV.set(k, v); }));
+    FOCUS = new Set(FLEV.keys());
     // the main skill also lights every card PoB says changes its damage (stat cards have no wires)
     const selC = list.find((c) => c.key === selected);
     const selG = selC && selC.gem ? selC.gem.group : null;
-    if (selG === S.mainGroup) list.forEach((c) => { const x = CONTRIB[c.key]; if (x && Math.abs(x.dpsPct ?? 0) >= 0.5) FOCUS.add(c.key); });
+    // PoB says these change the skill's damage directly even without a wire (plain stat bonuses)
+    FMAIN = selG === S.mainGroup;
+    if (FMAIN) list.forEach((c) => { const x = CONTRIB[c.key]; if (x && Math.abs(x.dpsPct ?? 0) >= 0.5) { FOCUS.add(c.key); if (!FUP.has(c.key)) FUP.set(c.key, 1); if (!FLEV.has(c.key) || FLEV.get(c.key) > 1) FLEV.set(c.key, 1); } });
   }
   const ps = portState(list);
   const world = $("#world");
@@ -634,7 +650,7 @@ function render() {
           if (a) inner += `<span class="pl" data-port="${a}" data-dir="in" style="top:${ty}px;line-height:${SROW}px;color:${PC(a)}" title="${esc(TL(g.ent.ev["in:" + a] || ""))}">${esc(PN(a))}</span>`;
           if (b) inner += `<span class="pr" data-port="${b}" data-dir="out" style="top:${ty}px;line-height:${SROW}px;color:${PC(b)}" title="${esc(TL(g.ent.ev["out:" + b] || ""))}">${esc(PN(b))}</span>`;
         }
-        sockHtml += `<div class="sgem ${g.off ? "off" : ""} ${selected === g.key ? "selg" : ""} ${NEWC.has(ident(g)) ? "newc" : ""}" data-newk="${esc(ident(g))}" style="height:${H}px">${inner}</div>`;
+        sockHtml += `<div class="sgem ${g.off ? "off" : ""} ${selected === g.key ? "selg" : ""} ${NEWC.has(ident(g)) ? "newc" : ""} ${GONEC.has(ident(g)) ? "gonec" : ""}" data-newk="${esc(ident(g))}" style="height:${H}px">${inner}</div>`;
         const HH = H;
         gp.ins.forEach((pn, r) => {
           const d = document.createElement("div"), local = isLocal(g, pn), missing = local ? false : !ps.prod[pn];
@@ -656,10 +672,17 @@ function render() {
       sockHtml += `</div>`;
     }
     if (coll) el.classList.add("fold");
+    if (GONEC.has(ident(c))) el.classList.add("gonec");
     if (NEWC.has(ident(c))) { el.classList.add("newc"); el.addEventListener("mouseenter", () => { NEWC.delete(ident(c)); el.classList.remove("newc"); }, { once: true }); }
     const stl = stLine(c) ? `<div class="stl" title="${esc(c.ent.st.map(PN).join(', '))}">능력치: ${esc(c.ent.st.map(PN).join(' · '))}</div>` : "";
     el.innerHTML = head + sockHtml + `<div class="ports">${rowsHtml}</div>` + stl + el.innerHTML;
-    if (FOCUS) el.classList.add(FOCUS.has(c.key) || (SOCK[c.key] || []).some((g) => FOCUS.has(g.key)) ? "hl" : "dim");
+    if (FOCUS) {
+      const lv = (k) => (FLEV && FLEV.has(k) ? FLEV.get(k) : FOCUS.has(k) ? 1 : 99);
+      const l = Math.min(lv(c.key), ...(SOCK[c.key] || []).map((g) => lv(g.key)));
+      el.classList.add(l <= 1 ? "hl" : l < 99 ? "ind" : "dim");
+      const x = CONTRIB[c.key];
+      if (FMAIN && l > 0 && l < 99 && x && Math.abs(x.dpsPct ?? 0) < 0.5 && Math.abs(x.ehpPct ?? 0) < 0.5) el.classList.add("pot");
+    }
     const off0 = st.head + sockH(c);
     const pinY = (i) => coll ? st.head / 2 : off0 + i * st.row + st.row / 2;
     ins.forEach((pn, i) => {
@@ -736,14 +759,17 @@ function render() {
     const key = pn === "Trigger" || pn === "Energy";
     let op = null;
     const hotE = FOCUS && !statSel && FOCUS.has(a.key) && FOCUS.has(b.key);
-    if (FOCUS) op = hotE ? 1 : 0.04;
+    const lvE = hotE && FLEV ? Math.max(FLEV.get(a.key) ?? 1, FLEV.get(b.key) ?? 1) : 1;
+    if (FOCUS) op = hotE ? (lvE <= 1 ? 1 : 0.5) : 0.1;
     else if (!bright && !key && !inCycle) op = ps.active[pn] ? 0.16 : 0.08;
     const unmet = hotE && !ps.active[pn];
-    paths += wire(s, t, unmet ? "#ff4d4d" : PC(pn), { on: ps.active[pn], op, w: hotE || inCycle ? 3 : guess ? 1.5 : 2, glow: inCycle || (hotE && !unmet), port: pn, dash: unmet ? "5 4" : guess ? "2 4" : null,
+    EDGES[i] = { a, b, pn, on: ps.active[pn], unmet, guess, inCycle };
+    paths += wire(s, t, unmet ? "#ff4d4d" : PC(pn), { on: ps.active[pn], op, w: hotE || inCycle ? 3 : guess ? 1.5 : 2, glow: inCycle || (hotE && !unmet && lvE <= 1), port: pn, ei: i, dash: unmet ? "5 4" : guess ? "2 4" : null,
       title: `${PN(pn)}: ${a.name} → ${b.name}${inCycle ? " (순환 고리)" : ""}${guess ? " (추정: PoB가 해석하지 못한 문장에서 읽음)" : ""} — 누르면 ${ps.active[pn] ? "끊기" : "잇기"}` });
   });
   svg.innerHTML = paths;
   svg.querySelectorAll("path[data-port]").forEach((p) => p.addEventListener("click", () => togglePort(p.dataset.port)));
+  svg.querySelectorAll("path[data-ei]").forEach((p) => { p.addEventListener("mouseenter", (ev) => wireTip(+p.dataset.ei, ev)); p.addEventListener("mousemove", (ev) => wireTip(+p.dataset.ei, ev)); p.addEventListener("mouseleave", () => ($("#tip").style.display = "none")); });
   applyView();
   $("#hiddenInfo").textContent = hiddenN ? `(${hiddenN}개 숨김)` : "";
   renderPortList(ps);
@@ -774,8 +800,72 @@ function scheduleContrib(list) {
     render();
   }, 400);
 }
+// what a wire carries: the sentence on the giving card, the sentence on the taking card, and whether PoB counts it
+function wireTip(i, ev) {
+  const e = EDGES[i]; if (!e) return;
+  const tip = $("#tip"), ea = e.a.ent || { ev: {} }, eb = e.b.ent || { ev: {} };
+  const give = TL(ea.ev["out:" + e.pn] || ""), take = TL(eb.ev["in:" + e.pn] || "");
+  let h = `<b>${esc(PN(e.pn))}</b>\n<span class="p">${esc(e.a.name)} → ${esc(e.b.name)}</span>`;
+  if (give) h += `\n<span class="st">주는 쪽:</span> ${esc(give)}`;
+  if (take) h += `\n<span class="st">받는 쪽:</span> ${esc(take)}`;
+  h += `\n<span class="${e.on ? "q" : ""}" style="${e.on ? "" : "color:#ff8a7a"}">${e.on ? "PoB 계산에 들어가 있어요" : "⚠ 지금은 계산에서 꺼져 있어요 (조건 미충족)"}</span>`;
+  if (e.inCycle) h += `\n<span class="q">순환 고리의 일부예요</span>`;
+  if (e.guess) h += `\n<span class="p">PoB가 해석하지 못한 문장에서 단어로 읽은 연결이에요</span>`;
+  h += `\n<span class="p">누르면 ${e.on ? "끊고" : "이어서"} 다시 계산해요</span>`;
+  tip.innerHTML = h; tip.style.display = "block";
+  tip.style.left = Math.min(ev.clientX + 14, innerWidth - 400) + "px"; tip.style.top = Math.min(ev.clientY + 12, innerHeight - tip.offsetHeight - 8) + "px";
+}
+// the selected skill on its own: PoB recalculated with it as the main skill
+const skillCache = new Map();
+async function showSkillBox() {
+  const box = $("#skillBox");
+  const c = selected && cards().find((x) => x.key === selected);
+  const host = c && (c.kind === "skill" && c.gem ? c : EMB[c.key] ? cards().find((x) => x.key === EMB[c.key]) : null);
+  if (!host || !host.gem || !S) { box.style.display = "none"; return; }
+  const key = JSON.stringify(S.stats) + "|" + host.gem.group;
+  let info = skillCache.get(key);
+  box.style.display = "block";
+  if (!info) {
+    box.innerHTML = `<b>${esc(host.name)}</b><div class="small">PoB로 계산 중…</div>`;
+    const r = await api({ op: "skillInfo", group: host.gem.group }, true);
+    if (!r.ok) { box.style.display = "none"; return; }
+    info = r.info; skillCache.set(key, info);
+    if (selected !== c.key) return;
+  }
+  const n = (v, d = 1) => (v == null ? null : Math.abs(v) >= 1e4 ? fmt(v) : (+v).toFixed(d).replace(/\.0+$/, ""));
+  const rows = [];
+  const add = (k, v) => { if (v != null && v !== "") rows.push(`<div class="kv"><span>${k}</span><span>${v}</span></div>`); };
+  const ty = new Set(info.types || []);
+  add("초당 피해", n(info.CombinedDPS || info.TotalDPS || info.MinionDPS || info.TotalDot, 0));
+  add("평균 명중 피해", n(info.AverageHit || info.AverageDamage, 0));
+  add("초당 사용", n(info.Speed, 2));
+  add("치명타 확률", info.CritChance != null && (info.CombinedDPS || info.AverageHit) ? n(info.CritChance, 1) + "%" : null);
+  add("투사체 수", n(info.ProjectileCount, 0));
+  add("재사용 대기시간", info.Cooldown ? n(info.Cooldown, 2) + "초" : null);
+  add("지속시간", info.Duration ? n(info.Duration, 1) + "초" : null);
+  const use = ty.has("Persistent") ? "계속 유지 (켜 두는 스킬)" : info.triggered || info.triggeredBy ? "자동 발동" + (info.triggeredBy ? `: ${T(info.triggeredBy)}` : "") : ty.has("Triggerable") && !ty.has("Attack") && !ty.has("Spell") ? "직접 사용 또는 발동" : "직접 사용";
+  add("사용 방식", use);
+  const costs = [info.ManaCost && `마나 ${n(info.ManaCost, 0)}`, info.LifeCost && `생명력 ${n(info.LifeCost, 0)}`, info.ESCost && `에너지 보호막 ${n(info.ESCost, 0)}`, info.RageCost && `격노 ${n(info.RageCost, 0)}`].filter(Boolean).join(", ");
+  add("사용 비용", costs || (ty.has("Persistent") ? "" : "없음"));
+  add("초당 마나 소모", info.ManaPerSecondCost ? n(info.ManaPerSecondCost, 1) : null);
+  add("정신력 점유", info.spirit ? n(info.spirit, 0) : null);
+  const need = [...new Set([host, ...(SOCK[host.key] || [])].filter((x) => !x.off).flatMap((x) => portsOf(x).ins || []))].filter((p) => G.ports[p] && !p.startsWith("stat:"));
+  const ps = portState(cards());
+  add("필요한 조건", need.length ? need.map((p) => `<span style="color:${ps.active[p] ? "#9fd8a8" : "#ff8a7a"}">${esc(PN(p))}</span>`).join(", ") : "없음");
+  // calculation dependencies only (wires and PoB's own remove-and-recalculate); passive tree paths are a separate relation
+  const byK = Object.fromEntries(cards().map((x) => [x.key, x]));
+  const own = new Set([host.key, ...(SOCK[host.key] || []).map((g) => g.key)]);
+  const lst = (m, lvl) => (m ? [...m.entries()].filter(([k, v]) => !own.has(k) && byK[k] && (lvl === 1 ? v === 1 : v > 1)).map(([k]) => byK[k]) : []);
+  const real = (c2) => { const x = CONTRIB[c2.key]; return !FMAIN || !x || Math.abs(x.dpsPct ?? 0) >= 0.5 || Math.abs(x.ehpPct ?? 0) >= 0.5; };
+  const names = (arr) => arr.slice(0, 8).map((c2) => `<span style="${real(c2) ? "" : "color:#8a919c;text-decoration:line-through"}" title="${real(c2) ? "" : "연결은 있지만 PoB 계산에서 이 스킬에 주는 변화가 없어요"}">${esc(c2.name)}</span>`).join(", ") + (arr.length > 8 ? ` 외 ${arr.length - 8}` : "");
+  const up1 = lst(FUP, 1), up2 = lst(FUP, 2), dn1 = lst(FDOWN, 1), dn2 = lst(FDOWN, 2);
+  const dep = selected === host.key || own.has(selected) ? `<div class="small" style="margin-top:6px"><b>영향을 주는 것</b> (직접 ${up1.length} · 간접 ${up2.length})<br>${names(up1) || "없음"}${up2.length ? `<br><span style="opacity:.7">간접: ${names(up2)}</span>` : ""}</div>
+    <div class="small" style="margin-top:4px"><b>영향을 받는 것</b> (직접 ${dn1.length} · 간접 ${dn2.length})<br>${names(dn1) || "없음"}${dn2.length ? `<br><span style="opacity:.7">간접: ${names(dn2)}</span>` : ""}</div>
+    <div class="small" style="margin-top:4px;color:var(--dim)">계산 관계만 셉니다. 패시브 트리 경로(찍기 위해 필요한 노드)는 패시브 카드나 트리 화면에서 따로 보여요.${FMAIN ? " 줄 그어진 이름은 연결은 있지만 지금 계산에 변화가 없는 것이에요." : ""}</div>` : "";
+  box.innerHTML = `<b>${esc(host.name)}</b> <span class="small">${host.gem.group === S.mainGroup ? "주 스킬" : "PoB에서 이 스킬을 주 스킬로 놓고 계산"}</span>${rows.join("")}${dep}`;
+}
 // what changed: cards that appeared after an optimisation or an add glow until the mouse has been over them once
-let NEWC = new Set();
+let NEWC = new Set(), GONEC = new Set();
 const ident = (c) => c.gem ? `gem:${c.gem.group}:${c.gem.idx}:${c.en}` : c.node ? "node:" + c.node.id : c.slot ? `item:${c.slot}:${c.en}` : c.key;
 const snapIds = () => new Set(cards().filter((c) => !c.off && !c.virtual).map(ident));
 function markNew(snap) { cards().forEach((c) => { if (!c.virtual && !c.off && !snap.has(ident(c))) NEWC.add(ident(c)); }); render(); }
@@ -895,6 +985,14 @@ function showDetail(c) {
     }
   }
   $("#detail").innerHTML = h + "</div>";
+  // allocation dependency (tree paths), kept apart from the calculation wires
+  if (c.node && S) api({ op: "treeHover", id: c.node.id }, true).then((r) => {
+    if (!r.ok || selected !== c.key || !r.remove) return;
+    const others = (r.nodes || []).filter((id) => id !== c.node.id);
+    const d = document.createElement("div"); d.className = "s"; d.style.marginTop = "6px";
+    d.innerHTML = `<b>트리 경로 (할당 관계)</b>\n${others.length ? `이 노드를 빼면 트리에서 함께 빠지는 노드 ${others.length}개: ${esc(others.slice(0, 6).map((id) => NN(id, "")).filter(Boolean).join(", "))}${others.length > 6 ? " …" : ""}` : "이 노드를 빼도 다른 노드는 그대로예요 (끝에 있는 노드)."}\n빼면 주 스킬 피해 ${(r.dpsPct > 0 ? "+" : "") + (r.dpsPct || 0).toFixed(1)}% · 유효 생명력 ${(r.ehpPct > 0 ? "+" : "") + (r.ehpPct || 0).toFixed(1)}%`;
+    const box = $("#detail .item"); if (box) box.appendChild(d);
+  });
 }
 
 // ------------------------------------------------------------------ actions
@@ -1179,6 +1277,9 @@ function drawTree() {
   // names of notables and keystones, shown once zoomed in far enough to read them
   $("#tL").innerHTML = L.nodes.filter((n) => tVisible(n) && (n.t === "Notable" || n.t === "Keystone" || (n.a && n.t !== "AscendClassStart"))).map((n) => {
     const [x, y] = tPos(n); return `<text x="${x}" y="${y + (TR[n.t] || 24) + 46}" class="${A.has(n.id) ? "on" : ""}">${esc(tName(n))}</text>`; }).join("");
+  // optimiser comparison: green = the optimiser added it, red dashed = the optimiser took it out
+  $("#tCmp").innerHTML = optCmp ? [...optCmp.na].filter((id) => !optCmp.nb.has(id)).map((id) => [id, "add"]).concat([...optCmp.nb].filter((id) => !optCmp.na.has(id)).map((id) => [id, "rm"]))
+    .map(([id, k]) => { const n = byId.get(id); if (!n || !tVisible(n)) return ""; const [x, y] = tPos(n); return `<circle cx="${x}" cy="${y}" r="${(TR[n.t] || 24) + 30}" class="${k}"/>`; }).join("") : "";
   $("#tE1").innerHTML = e1; $("#tE2").innerHTML = e2; $("#tN").innerHTML = nd; $("#tHov").innerHTML = "";
   $("#tHits").textContent = q ? `${hit}개 찾음` : "";
   $("#tSum").innerHTML = treeSummary();
@@ -1387,7 +1488,7 @@ async function runOpt() {
   if (!$("#o_ehp").checked) options.ehpWeight = 0;
   $("#o_go").disabled = true;
   $("#o_res").innerHTML = '<div class="small">최적화 중… 보통 1~3분 걸려요 (고유 장비까지 켜면 더 오래).</div>';
-  const snap = snapIds();
+  const snap = snapIds(), nodes0 = new Set(S.nodes.map((n) => n.id)), ni0 = Object.fromEntries(S.nodes.map((n) => [n.id, n]));
   const r = await api({ op: "optimize", options });
   $("#o_go").disabled = false;
   if (!r.ok) { $("#o_res").innerHTML = `<div class="prob">실패: ${esc(r.error || "")}</div>`; return; }
@@ -1396,23 +1497,71 @@ async function runOpt() {
   prev = r.before; S = r.state; ORIG = { ...(S.config || {}) };
   await syncConfig();
   markNew(snap);
+  const ex = await api({ op: "export" }, true);
+  optCmp = ex.ok ? { before: r.undo, after: ex.code, sb: r.before, sa: S.stats, ib: snap, ia: snapIds(), nb: nodes0, na: new Set(S.nodes.map((n) => n.id)), ni: { ...ni0, ...Object.fromEntries(S.nodes.map((n) => [n.id, n])) }, view: "after" } : null;
+  updCmpBar(); if (treeOpen) drawTree();
   setTab("opt");
+}
+// ------------------------------------------------------------------ before / after the optimiser
+let optCmp = null;
+function updCmpBar() {
+  const bar = $("#cmpBar");
+  bar.style.display = optCmp ? "inline-flex" : "none";
+  bar.querySelectorAll("button").forEach((b) => b.classList.toggle("on", !!optCmp && b.dataset.v === optCmp.view));
+}
+async function cmpShow(view) {
+  if (!optCmp || optCmp.view === view) return;
+  const r = await api({ op: "load", code: view === "before" ? optCmp.before : optCmp.after });
+  if (!r.ok) return;
+  optCmp.view = view;
+  S = r.state; ghosts = []; selected = null; lastSent = {}; ORIG = { ...(S.config || {}) };
+  prev = view === "before" ? optCmp.sa : optCmp.sb;   // "방금 바꾼 것" now reads as the difference to the other side
+  NEWC = new Set(view === "after" ? [...optCmp.ia].filter((k) => !optCmp.ib.has(k)) : []);
+  GONEC = new Set(view === "before" ? [...optCmp.ib].filter((k) => !optCmp.ia.has(k)) : []);
+  renderMainSkill();
+  await syncConfig();
+  updCmpBar(); treeS = null; treeSync();
+  if (tab === "opt" || tab === "why") renderPalette();
 }
 function showOpt(r) {
   const f = (v) => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
   const ehp = r.before.TotalEHP ? (r.after.TotalEHP - r.before.TotalEHP) / r.before.TotalEHP * 100 : 0;
   const TT = (x) => x.split("+").map((y) => T(y.trim())).join(" + ");
-  const tr = (l) => { l = l.replace(/^\s*[\d.]+s\s*/, "").replace(/\s*score [\d.]+ -> [\d.]+/, ""); let m;
-    if ((m = l.match(/^support \+(.+)$/))) return "보조젬 추가: " + T(m[1]);
-    if ((m = l.match(/^support (.+) -> (.+)$/))) return `보조젬 교체: ${T(m[1])} → ${T(m[2])}`;
-    if ((m = l.match(/^support -(.+)$/))) return "보조젬 제거: " + T(m[1]);
-    if ((m = l.match(/^tree swap -(.+?) \((\d+) pts\) \+(.+?) \((\d+) pts\)/))) return `패시브 교체: ${TT(m[1])} (${m[2]}점) → ${T(m[3])} (${m[4]}점)`;
-    if ((m = l.match(/^spirit \+(.+)$/))) return "유지 스킬 추가: " + T(m[1]);
-    return l; };
+  // each accepted change with how much it moved the optimiser's score (damage, guarded by survivability)
+  const tr = (l) => { const sc = l.match(/score ([\d.]+) -> ([\d.]+)/); const gain = sc && +sc[1] ? ` (${f((+sc[2] - +sc[1]) / +sc[1] * 100)})` : "";
+    l = l.replace(/^\s*[\d.]+s\s*/, "").replace(/\s*score [\d.]+ -> [\d.]+/, ""); let m;
+    if ((m = l.match(/^support \+(.+)$/))) return "보조젬 추가: " + T(m[1]) + gain;
+    if ((m = l.match(/^support (.+) -> (.+)$/))) return `보조젬 교체: ${T(m[1])} → ${T(m[2])}` + gain;
+    if ((m = l.match(/^support -(.+)$/))) return "보조젬 제거: " + T(m[1]) + gain;
+    if ((m = l.match(/^tree swap -(.*?) \((\d+) pts\) \+(.+?) \((\d+) pts\)/))) return (m[1] ? `패시브 교체: ${TT(m[1])} (${m[2]}점) → ` : "패시브 추가 (남은 포인트): ") + `${T(m[3])} (${m[4]}점)` + gain;
+    if ((m = l.match(/^spirit \+(.+)$/))) return "유지 스킬 추가: " + T(m[1]) + gain;
+    return l + gain; };
   const lines = (r.log || []).filter((l) => /support|tree swap|spirit \+|unique|->/.test(l) && !/iteration|start score|rejected/.test(l)).map(tr);
-  $("#o_res").innerHTML = `<div class="item"><div class="n">결과 (${(r.seconds || 0).toFixed(0)}초)</div>
-    <div class="t"><span class="chip ${r.dpsPct > 0.05 ? "up" : ""}">피해 ${f(r.dpsPct || 0)}</span><span class="chip ${ehp > 0.05 ? "up" : ehp < -0.05 ? "down" : ""}">생존 ${f(ehp)}</span></div>
-    ${probHtml(r)}<div class="s">${esc(lines.join("\n") || "더 좋아지는 변경을 찾지 못했어요.")}</div></div>`;
+  let h = `<div class="item"><div class="n">결과 (${(r.seconds || 0).toFixed(0)}초)</div>
+    <div class="kv2">주 스킬 초당 피해: ${fmt(dps(r.before))} → <b>${fmt(dps(r.after))}</b> <span class="${r.dpsPct > 0.05 ? "up" : ""}">${f(r.dpsPct || 0)}</span></div>
+    <div class="kv2">유효 생명력: ${fmt(r.before.TotalEHP)} → <b>${fmt(r.after.TotalEHP)}</b> <span class="${ehp > 0.05 ? "up" : ehp < -0.05 ? "down" : ""}">${f(ehp)}</span></div>${probHtml(r)}`;
+  // which passives went out and came in (named nodes; travel nodes only counted)
+  if (optCmp) {
+    const ni = optCmp.ni || {};
+    const gone = [...optCmp.nb].filter((id) => !optCmp.na.has(id)), added = [...optCmp.na].filter((id) => !optCmp.nb.has(id));
+    const named = (ids) => ids.filter((id) => ni[id] && (ni[id].type === "Notable" || ni[id].type === "Keystone"));
+    const plain = (ids) => ids.length - named(ids).length;
+    const lst = (ids) => named(ids).map((id) => { const k = KO.nodes[String(id)]; return `<div title="${esc(k && k.s ? k.s.join("\n") : (ni[id].stats || []).map(TL).join("\n"))}">· ${esc(NN(id, ni[id].name))}</div>`; }).join("") + (plain(ids) ? `<div class="small">· 이어 주는 일반 노드 ${plain(ids)}개</div>` : "");
+    if (gone.length || added.length) h += `<div class="s" style="margin-top:6px"><b style="color:#ff8a7a">제거한 패시브 −${gone.length}</b>${lst(gone) || "<div>없음</div>"}<b style="color:#3dff9a">추가한 패시브 +${added.length}</b>${lst(added) || "<div>없음</div>"}</div>`;
+  }
+  h += `<div class="s" style="margin-top:6px"><b>바꾼 것과 그때 오른 점수</b>\n${esc(lines.join("\n") || "더 좋아지는 변경을 찾지 못했어요.")}</div>`;
+  // validation of the result
+  const CK = { connected: "모든 패시브가 시작점과 이어져 있음", points: "패시브 포인트 안에서 바꿈", ascendancy: "전직 포인트와 전직이 맞음", keystones: "핵심 노드", config: "전투 조건(설정)이 전후 같음", version: "같은 트리·계산 버전" };
+  if (r.checks) h += `<div class="s" style="margin-top:6px"><b>검증</b>${r.checks.map((c) => {
+    let d = "";
+    if (c.key === "points") d = ` (${c.before} → ${c.after} / 최대 ${c.max})`;
+    if (c.key === "ascendancy") d = ` (${c.after} / ${c.max})`;
+    if (c.key === "connected" && !c.ok) d = `: 끊긴 노드 ${c.detail.map((x) => NN(x.id, x.name)).join(", ")}`;
+    if (c.key === "keystones") d = `: ${(c.after || []).map((k) => T(k)).join(", ") || "없음"}${JSON.stringify(c.before) !== JSON.stringify(c.after) ? " (바뀜)" : " (그대로)"}`;
+    if (c.key === "config" && !c.ok) d = `: 바뀐 설정 ${c.detail.join(", ")}`;
+    return `<div style="color:${c.ok ? "#9fd8a8" : "#ff8a7a"}">${c.ok ? "✓" : "⚠"} ${CK[c.key] || c.key}${esc(d)}</div>`; }).join("")}</div>`;
+  if (optCmp) h += `<div class="small" style="margin-top:6px">위쪽의 <b>최적화 전 / 후</b> 버튼으로 두 빌드를 번갈아 볼 수 있어요. 후에서는 새로 들어온 것이 초록, 전에서는 빠질 것이 빨강이에요. 패시브 트리에서도 같은 색 테두리로 보여요. 초록 카드를 누르면 그 패시브가 어떤 계산 경로로 주 스킬에 영향을 주는지 보여요.</div>`;
+  $("#o_res").innerHTML = h + "</div>";
 }
 async function renderPalette() {
   const P = $("#palette");
@@ -1512,6 +1661,7 @@ async function loadBuild(code) {
   if (!r.ok) return;
   S = r.state; prev = null; override = {}; ghosts = []; selected = null; lastSent = {};
   TREE = null; treeS = null;   // another build can be on another tree version
+  optCmp = null; GONEC = new Set(); updCmpBar();
   loadDragged(code.trim());
   ORIG = { ...(S.config || {}) };
   prodAtLoad = new Set(Object.keys(portState(cards()).prod));
@@ -1569,6 +1719,7 @@ document.addEventListener("mouseover", (ev) => {
   } catch (e) {}
   renderPalette();
   initTree();
+  $("#cmpBar").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-v]"); if (b) cmpShow(b.dataset.v); });
   checkUpdate();
   setInterval(checkUpdate, 30 * 60 * 1000);
   let again = null;
