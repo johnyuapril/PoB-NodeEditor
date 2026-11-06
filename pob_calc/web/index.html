@@ -49,6 +49,8 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card.off { opacity: .4; }
 .card.sel { outline: 3px solid #ff5a3d; outline-offset: 1px; }
 .card.dim { opacity: .28; }
+.colh { position: absolute; white-space: nowrap; font-size: 13px; font-weight: 700; color: #cfd6df; cursor: pointer; user-select: none; padding: 2px 8px; border-radius: 6px; background: rgba(255,255,255,.06); }
+.colh span { font-size: 10px; font-weight: 400; color: #8a94a0; margin-left: 4px; } .colh:hover { background: rgba(255,255,255,.12); }
 .cb { font-size: 10px; font-weight: 700; padding: 0 4px; border-radius: 6px; background: rgba(0,0,0,.35); white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; }
 .cb.dn { color: #ff8a7a; } .cb.up { color: #7ee08a; } .cb.eh.dn { color: #ffb36b; } .cb.eh.up { color: #7fc8ff; } .cb.z { color: #888; font-weight: 400; }
 .card.off.dim { opacity: .15; }
@@ -408,13 +410,17 @@ const srcOf = (c, d, pn) => ((c.ent && c.ent.src) || {})[d + ":" + pn];
 const sameGroup = (a, b) => a.gem && b.gem && a.gem.group === b.gem.group;
 const groupPort = (a, b, pn) => pn === "Trigger" && a.gem && b.gem;
 const linkOK = (a, b, pn) => groupPort(a, b, pn) ? (b.triggeredBy ? b.triggeredBy === a.key : sameGroup(a, b)) : ((!isLocal(a, pn) && !isLocal(b, pn)) || sameGroup(a, b));
-const stLine = (c) => c.kind !== "global" && c.ent && (c.ent.st || []).length && $("#showStats").checked ? 18 : 0;
+// folded columns (items, passives, ascendancy): cards show only their header line; the selected card always opens
+const COLNAME = { 2: "장비", 3: "패시브", 4: "전직" };
+let COLL = new Set(); try { COLL = new Set(JSON.parse(localStorage.getItem("pob-fold") || "[]")); } catch (e) {}
+const isColl = (c) => COLL.has(c.col) && COLNAME[c.col] && c.key !== selected && !c.gem;
+const stLine = (c) => isColl(c) ? 0 : c.kind !== "global" && c.ent && (c.ent.st || []).length && $("#showStats").checked ? 18 : 0;
 const nSock = (c) => (SOCK[c.key] ? Math.max(SOCKETS, SOCK[c.key].length) : 0);
 // supports live inside their skill card: one block per socket, as tall as its longest pin column
 const sockRows = (g) => { if (!g) return 1; const p = portsOf(g); return Math.max(1, p.ins.length, p.outs.length); };
 const sockH = (c) => { const n = nSock(c); if (!n) return 0; let h = 0; for (let i = 0; i < n; i++) h += sockRows(SOCK[c.key][i]) * SROW; return h + 7; };
 let EMB = {};   // support card key -> skill card key it is socketed in
-function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + sockH(c) + st.row * Math.max(ins.length, outs.length) + stLine(c) + (st.pill ? 4 : 8); }
+function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); if (isColl(c)) return st.head + 2; return st.head + sockH(c) + st.row * Math.max(ins.length, outs.length) + stLine(c) + (st.pill ? 4 : 8); }
 function layout(list) {
   // default positions: situation on top, each skill group = its support pills on the left + skill node(s) on the right,
   // then items, passives and ascendancy columns. Saved (dragged) positions win.
@@ -436,8 +442,12 @@ function layout(list) {
     cs.forEach((c) => { if (!def[c.key]) { def[c.key] = { x: 20, y: ly }; ly += cardH(c) + 10; } });
     y = Math.max(ly, ry) + 36;
   });
-  const colX = { 2: 560, 3: 900, 4: 1240, 5: 1580 }, colY = { 2: 20, 3: 20, 4: 20, 5: 20 };
-  list.forEach((c) => { if (def[c.key] || !colX[c.col]) return; def[c.key] = { x: colX[c.col], y: colY[c.col] }; colY[c.col] += cardH(c) + 18; });
+  const colX = COLX, colY = { 2: 50, 3: 50, 4: 50, 5: 20 };
+  // a folded column lists its cards by how much the build loses without them
+  const worth = (c) => { const x = CONTRIB[c.key]; return x ? Math.min(x.dpsPct ?? 0, (x.ehpPct ?? 0) / 2) : 0; };
+  const idx0 = new Map(list.map((c, i) => [c.key, i]));
+  const order = list.slice().sort((a, b) => (a.col - b.col) || (COLL.has(a.col) ? worth(a) - worth(b) : 0) || idx0.get(a.key) - idx0.get(b.key));
+  order.forEach((c) => { if (def[c.key] || !colX[c.col]) return; def[c.key] = { x: colX[c.col], y: colY[c.col] }; colY[c.col] += cardH(c) + (isColl(c) ? 6 : 18); });
   pos = {};
   list.forEach((c) => { pos[c.key] = dragged[c.key] || def[c.key] || { x: 20, y }; });
 }
@@ -467,6 +477,7 @@ function gval(p) {
   return "";
 }
 let SRCN = {}, FOCUS = null, statSel = null;
+const COLX = { 2: 560, 3: 900, 4: 1240, 5: 1580 };
 const srcCount = (p) => SRCN[p] || 0;
 function render() {
   CONSUMED = null;
@@ -474,7 +485,7 @@ function render() {
   CONSUMED = new Set(all.filter((c) => c.ent && !c.off).flatMap((c) => c.ent.in));
   SRCN = {}; all.forEach((c) => { if (c.ent && !c.off && c.kind !== "global") (c.ent.st || []).forEach((p) => { SRCN[p] = (SRCN[p] || 0) + 1; }); });
   const hide = $("#hideBare").checked;
-  const has = (c) => { const p = portsOf(c); return p.ins.length || p.outs.length || stLine(c); };
+  const has = (c) => { const p = portsOf(c); return p.ins.length || p.outs.length || (c.kind !== "global" && c.ent && (c.ent.st || []).length && $("#showStats").checked); };
   const liveGroups = new Set(all.filter((c) => c.gem && has(c)).map((c) => c.gem.group));
   if (S) liveGroups.add(S.mainGroup);
   const list = hide ? all.filter((c) => has(c) || c.ghost || c.key === selected || (c.gem && liveGroups.has(c.gem.group))) : all;
@@ -495,7 +506,15 @@ function render() {
   }
   const ps = portState(list);
   const world = $("#world");
-  world.querySelectorAll(".card").forEach((n) => n.remove());
+  world.querySelectorAll(".card,.colh").forEach((n) => n.remove());
+  Object.entries(COLNAME).forEach(([col, nm]) => {
+    const n = list.filter((c) => c.col === +col && !c.gem).length; if (!n) return;
+    const h = document.createElement("div"); h.className = "colh";
+    h.style.left = COLX[col] + "px"; h.style.top = "14px";
+    h.innerHTML = `${COLL.has(+col) ? "▸" : "▾"} ${nm} ${n}개 <span>${COLL.has(+col) ? "펼치기" : "접기"}</span>`;
+    h.addEventListener("click", () => { COLL.has(+col) ? COLL.delete(+col) : COLL.add(+col); try { localStorage.setItem("pob-fold", JSON.stringify([...COLL])); } catch (e) {} render(); });
+    world.appendChild(h);
+  });
   const dots = {}, exec = {};
   list.forEach((c) => {
     if (EMB[c.key]) return;
@@ -504,7 +523,8 @@ function render() {
     el.className = "card" + (st.pill ? " pill" : "") + (c.off ? " off" : "") + (selected === c.key ? " sel" : "");
     el.style.left = p.x + "px"; el.style.top = p.y + "px"; el.style.width = st.w + "px";
     if (st.pill) el.style.background = st.pill;
-    const rows = Math.max(ins.length, outs.length);
+    const coll = isColl(c);
+    const rows = coll ? 0 : Math.max(ins.length, outs.length);
     let rowsHtml = "";
     for (let i = 0; i < rows; i++) {
       const a = ins[i], b = outs[i];
@@ -559,17 +579,18 @@ function render() {
       }
       sockHtml += `</div>`;
     }
+    if (coll) el.classList.add("fold");
     const stl = stLine(c) ? `<div class="stl" title="${esc(c.ent.st.map(PN).join(', '))}">능력치: ${esc(c.ent.st.map(PN).join(' · '))}</div>` : "";
     el.innerHTML = head + sockHtml + `<div class="ports">${rowsHtml}</div>` + stl + el.innerHTML;
     if (FOCUS) el.classList.add(FOCUS.has(c.key) || (SOCK[c.key] || []).some((g) => FOCUS.has(g.key)) ? "hl" : "dim");
     const off0 = st.head + sockH(c);
-    const pinY = (i) => off0 + i * st.row + st.row / 2;
+    const pinY = (i) => coll ? st.head / 2 : off0 + i * st.row + st.row / 2;
     ins.forEach((pn, i) => {
       if (c.kind === "global") return;
       const d = document.createElement("div");
       const local = isLocal(c, pn);
       const missing = local ? false : !ps.prod[pn];
-      d.className = "dot"; d.style.left = "-6px"; d.style.top = (pinY(i) - 6) + "px";
+      d.className = "dot"; d.style.left = "-6px"; d.style.top = (pinY(i) - 6) + "px"; if (coll && i) d.style.display = "none";
       d.style.background = missing ? "transparent" : PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] || missing ? 1 : 0.4;
       d.title = PN(pn) + (local ? " (보조받는 스킬 자신에게서만: 다른 스킬의 효과와는 연결되지 않음)" : missing ? " (만드는 요소 없음)" : ps.active[pn] ? "" : " (꺼짐)");
       if (local) d.classList.add("local");
@@ -579,7 +600,7 @@ function render() {
     });
     outs.forEach((pn, i) => {
       const d = document.createElement("div");
-      d.className = "dot"; d.style.left = (st.w - 6) + "px"; d.style.top = (pinY(i) - 6) + "px";
+      d.className = "dot"; d.style.left = (st.w - 6) + "px"; d.style.top = (pinY(i) - 6) + "px"; if (coll && i) d.style.display = "none";
       d.style.background = PC(pn); d.style.borderColor = PC(pn); d.style.opacity = ps.active[pn] ? 1 : 0.4; d.title = PN(pn);
       if (isLocal(c, pn)) { d.classList.add("local"); d.title += " (보조받는 스킬 자신에게만)"; }
       if (srcOf(c, "out", pn) === "guess") { d.classList.add("guess"); d.title += " — 추정(PoB가 해석하지 못한 문장)"; }
