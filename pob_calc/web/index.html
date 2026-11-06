@@ -123,7 +123,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
   <div id="main">
     <div class="side" id="left">
       <div class="tabs" id="tabs">
-        <button data-t="port" class="on">연결</button><button data-t="passive">패시브</button><button data-t="unique">고유템</button><button data-t="gem">보조젬</button><button data-t="loop">고리 찾기</button>
+        <button data-t="port" class="on">연결</button><button data-t="passive">패시브</button><button data-t="unique">고유템</button><button data-t="gem">보조젬</button><button data-t="loop">고리 찾기</button><button data-t="opt">최적화</button>
       </div>
       <div id="palette"></div>
     </div>
@@ -1006,10 +1006,64 @@ async function renderLoops(P) {
     if (r.ok) { S = r.state; await syncConfig(); }
   }));
 }
+// ------------------------------------------------------------------ optimiser
+// PoB's own greedy search on the loaded build: best supports for the main skill, passive swaps (refund the weakest
+// notable and its travel nodes, spend the points on a better one), optionally spirit skills and uniques.
+let optResult = null, optUndo = [];
+function renderOpt(P) {
+  const ck = (id, label, on, tip) => `<label class="small" style="display:block;margin:3px 0" title="${tip}"><input type="checkbox" id="${id}" ${on ? "checked" : ""}> ${label}</label>`;
+  P.innerHTML = `<div class="small" style="margin-bottom:6px">지금 빌드를 PoB 계산으로 하나씩 바꿔 보며 더 좋아지는 변경만 남깁니다. 정신력·보조 칸 5개·능력치 요구 같은 실제 제약을 지킵니다.</div>
+    ${ck("o_sup", "주 스킬 보조젬 채우기·교체", true, "빈 칸을 채우고, 더 나은 보조젬이 있으면 바꾸고, 손해인 젬은 뺍니다")}
+    ${ck("o_tree", "패시브 교체 (포인트 수 그대로)", true, "가장 약한 주요 노드와 그 노드로만 가는 길을 빼고, 그 포인트로 더 좋은 주요 노드를 찍습니다")}
+    ${ck("o_spirit", "유지 스킬 추가 (남는 정신력 안에서만)", false, "정신력이 남을 때만 오라·전령 같은 유지 스킬을 추가합니다")}
+    ${ck("o_uniq", "고유 장비 교체", false, "슬롯마다 모든 고유템을 넣어 봅니다 (오래 걸림)")}
+    ${ck("o_ehp", "유효 생명력은 지금보다 낮추지 않기", true, "끄면 피해만 봅니다")}
+    <div class="t" style="margin:8px 0"><button id="o_go">최적화 시작</button>${optUndo.length ? '<button id="o_undo">되돌리기</button>' : ""}</div><div id="o_res"></div>`;
+  $("#o_go").addEventListener("click", runOpt);
+  const u = $("#o_undo"); if (u) u.addEventListener("click", async () => { const code = optUndo.pop(); optResult = null; await loadBuild(code); setTab("opt"); });
+  if (optResult) showOpt(optResult);
+}
+async function runOpt() {
+  const phases = [];
+  if ($("#o_sup").checked) phases.push("supports");
+  if ($("#o_spirit").checked) phases.push("spirit");
+  if ($("#o_tree").checked) phases.push("treeSwap");
+  if ($("#o_uniq").checked) phases.push("uniques");
+  if (!phases.length) return;
+  const options = { phases, maxSpiritSkills: 2 };
+  if (!$("#o_ehp").checked) options.ehpWeight = 0;
+  $("#o_go").disabled = true;
+  $("#o_res").innerHTML = '<div class="small">최적화 중… 보통 1~3분 걸려요 (고유 장비까지 켜면 더 오래).</div>';
+  const r = await api({ op: "optimize", options });
+  $("#o_go").disabled = false;
+  if (!r.ok) { $("#o_res").innerHTML = `<div class="prob">실패: ${esc(r.error || "")}</div>`; return; }
+  optUndo.push(r.undo);
+  optResult = r;
+  prev = r.before; S = r.state; ORIG = { ...(S.config || {}) };
+  await syncConfig();
+  setTab("opt");
+}
+function showOpt(r) {
+  const f = (v) => (v > 0 ? "+" : "") + v.toFixed(1) + "%";
+  const ehp = r.before.TotalEHP ? (r.after.TotalEHP - r.before.TotalEHP) / r.before.TotalEHP * 100 : 0;
+  const TT = (x) => x.split("+").map((y) => T(y.trim())).join(" + ");
+  const tr = (l) => { l = l.replace(/^\s*[\d.]+s\s*/, "").replace(/\s*score [\d.]+ -> [\d.]+/, ""); let m;
+    if ((m = l.match(/^support \+(.+)$/))) return "보조젬 추가: " + T(m[1]);
+    if ((m = l.match(/^support (.+) -> (.+)$/))) return `보조젬 교체: ${T(m[1])} → ${T(m[2])}`;
+    if ((m = l.match(/^support -(.+)$/))) return "보조젬 제거: " + T(m[1]);
+    if ((m = l.match(/^tree swap -(.+?) \((\d+) pts\) \+(.+?) \((\d+) pts\)/))) return `패시브 교체: ${TT(m[1])} (${m[2]}점) → ${T(m[3])} (${m[4]}점)`;
+    if ((m = l.match(/^spirit \+(.+)$/))) return "유지 스킬 추가: " + T(m[1]);
+    return l; };
+  const lines = (r.log || []).filter((l) => /support|tree swap|spirit \+|unique|->/.test(l) && !/iteration|start score|rejected/.test(l)).map(tr);
+  $("#o_res").innerHTML = `<div class="item"><div class="n">결과 (${(r.seconds || 0).toFixed(0)}초)</div>
+    <div class="t"><span class="chip ${r.dpsPct > 0.05 ? "up" : ""}">피해 ${f(r.dpsPct || 0)}</span><span class="chip ${ehp > 0.05 ? "up" : ehp < -0.05 ? "down" : ""}">생존 ${f(ehp)}</span></div>
+    ${probHtml(r)}<div class="s">${esc(lines.join("\n") || "더 좋아지는 변경을 찾지 못했어요.")}</div></div>`;
+}
 async function renderPalette() {
   const P = $("#palette");
   if (!S) { P.innerHTML = '<div class="small">먼저 빌드를 불러오세요.</div>'; return; }
   if (tab === "loop") return renderLoops(P);
+  if (tab === "opt") return renderOpt(P);
   if (tab === "port") {
     const opts = Object.keys(G.ports).sort((a, b) => PN(a).localeCompare(PN(b), "ko")).map((k) => `<option value="${k}" ${portFilter && portFilter.port === k ? "selected" : ""}>${esc(PN(k))}</option>`).join("");
     const head = `<div class="row"><select id="pf"><option value="">연결 종류 선택…</option>${opts}</select><select id="pd"><option value="out" ${portFilter && portFilter.dir === "in" ? "selected" : ""}>만드는 것</option><option value="in" ${portFilter && portFilter.dir === "out" ? "selected" : ""}>쓰는 것</option></select></div>

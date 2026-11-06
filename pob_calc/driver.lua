@@ -836,7 +836,7 @@ local H = {
 	handle = handle, dkjson = dkjson, recalc = recalc, warn = warn, warnings = warnings,
 	loadBase = loadBase, applyVariant = applyVariant, allocNodes = allocNodes, deallocNodes = deallocNodes, findNode = findNode,
 	addItems = addItems, addSkills = addSkills, applyConfig = applyConfig, selectMainSkill = selectMainSkill,
-	snapshot = snapshot, listSkills = listSkills, delta = delta, exportCode = exportCode, logLines = logLines,
+	snapshot = snapshot, listSkills = listSkills, delta = delta, exportCode = exportCode, logLines = logLines, here = here,
 }
 if reqPath == "--http" then
 	H.mode = "lib"

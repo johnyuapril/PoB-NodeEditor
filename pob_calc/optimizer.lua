@@ -295,6 +295,120 @@ function O.run(H, opt)
 		return changed
 	end
 
+	-- Tree swap (for a finished build with no free points): refund the weakest notable together with the travel
+	-- nodes that only lead to it, spend those points on the best reachable notable instead, keep it if PoB says it is better.
+	local function treeSwapPhase(rounds)
+		local spec = build.spec
+		local changed = false
+		local function isTravel(x) return x.type == "Normal" and not x.ascendancyName end
+		local function allocDeg(x, gone)
+			local d = 0
+			for _, o in ipairs(x.linked or {}) do if o.alloc and not gone[o] and not o.ascendancyName then d = d + 1 end end
+			return d
+		end
+		local function spur(w)
+			local set, list = { [w] = true }, { w }
+			local frontier = { w }
+			while #frontier > 0 do
+				local x = table.remove(frontier)
+				for _, o in ipairs(x.linked or {}) do
+					if o.alloc and not set[o] and isTravel(o) and allocDeg(o, set) <= 1 then
+						set[o] = true list[#list+1] = o frontier[#frontier+1] = o
+					end
+				end
+			end
+			return set, list
+		end
+		for r = 1, rounds or 10 do
+			local calcFunc = fresh()
+			local cur = current()
+			if cur <= 0 then break end
+			local free = (opt.points or treeUsed()) - treeUsed()
+			-- how much each removable notable is worth per point
+			local rems = {}
+			for _, n in pairs(spec.allocNodes) do
+				if (n.type == "Notable" or n.type == "Keystone") and not n.ascendancyName and not (opt.locked and opt.locked[n.id]) then
+					local set, list = spur(n)
+					local dep = 0 for _ in pairs(n.depends or {}) do dep = dep + 1 end
+					if dep <= 1 then
+						local okc, out = pcall(calcFunc, { removeNodes = set }, false)
+						if okc and out then
+							local sr = score(out)
+							rems[#rems+1] = { n = n, set = set, list = list, pts = #list, s = sr, loss = (sr > 0 and math.log(cur / sr) or 99) }
+						end
+					end
+				end
+			end
+			table.sort(rems, function(a, b) return a.loss / a.pts < b.loss / b.pts end)
+			-- what each unallocated notable would add
+			local adds = {}
+			for _, n in pairs(spec.nodes) do
+				if not n.alloc and n.path and not n.ascendancyName and (n.type == "Notable" or n.type == "Keystone") and #n.path <= (opt.maxDistance or 7) then
+					local add = {}
+					for _, p in ipairs(n.path) do add[p] = true end
+					local okc, out = pcall(calcFunc, { addNodes = add }, false)
+					if okc and out then
+						local sa = score(out)
+						if sa > cur then adds[#adds+1] = { n = n, add = add, cost = pathCost(n), gain = math.log(sa / cur) } end
+					end
+				end
+			end
+			table.sort(adds, function(a, b) return a.gain > b.gain end)
+			-- for each strong add, fund it with the weakest refunds (several small notables can pay for one big one)
+			local pairs_ = {}
+			for j = 1, math.min(30, #adds) do
+				local ad = adds[j]
+				local need, loss, set, list, names = ad.cost - free, 0, {}, {}, {}
+				for i = 1, #rems do
+					if need <= 0 then break end
+					local rm = rems[i]
+					local clash = false
+					for p in pairs(ad.add) do if rm.set[p] then clash = true break end end
+					if not clash then
+						for x in pairs(rm.set) do set[x] = true end
+						for _, x in ipairs(rm.list) do list[#list+1] = x end
+						names[#names+1] = tostring(rm.n.dn)
+						need, loss = need - rm.pts, loss + rm.loss
+					end
+				end
+				if need <= 0 and ad.gain > loss then pairs_[#pairs_+1] = { rm = { set = set, list = list, pts = #list, names = names }, ad = ad, est = ad.gain - loss } end
+			end
+			table.sort(pairs_, function(a, b) return a.est > b.est end)
+			if opt.debug then
+				local t = {}
+				for i = 1, math.min(4, #rems) do t[#t+1] = string.format("%s(%dpt %.3f)", tostring(rems[i].n.dn), rems[i].pts, rems[i].loss) end
+				local u = {}
+				for i = 1, math.min(4, #adds) do u[#u+1] = string.format("%s(%dpt %.3f)", tostring(adds[i].n.dn), adds[i].cost, adds[i].gain) end
+				note("  swap round %d: %d removable [%s], %d useful adds [%s], %d plans, free %d", r, #rems, table.concat(t, ", "), #adds, table.concat(u, ", "), #pairs_, free)
+			end
+			local best, bestS = nil, cur * 1.003
+			for k = 1, math.min(8, #pairs_) do
+				local pr = pairs_[k]
+				local okc, out = pcall(calcFunc, { removeNodes = pr.rm.set, addNodes = pr.ad.add }, false)
+				if okc and out then local sc = score(out) if sc > bestS then best, bestS = pr, sc end end
+			end
+			if not best then break end
+			for i = #best.rm.list, 1, -1 do local x = best.rm.list[i] if x.alloc then spec:DeallocNode(x) end end
+			spec:BuildAllDependsAndPaths()
+			local target = spec.nodes[best.ad.n.id]
+			if target and not target.alloc and target.path then spec:AllocNode(target) end
+			local after = current()
+			if after < cur * 0.999 then
+				-- the real allocation came out worse than the estimate: put the old notable back
+				if target and target.alloc then local _, tl = spur(target) for i = #tl, 1, -1 do if tl[i].alloc then spec:DeallocNode(tl[i]) end end end
+				spec:BuildAllDependsAndPaths()
+				for _, x in ipairs(best.rm.list) do local w = spec.nodes[x.id] if w and not w.alloc and w.path and (w.type == "Notable" or w.type == "Keystone") then spec:AllocNode(w) end end
+				note("tree swap -%s +%s rejected (%.0f -> %.0f), reverted", table.concat(best.rm.names, "+"), tostring(best.ad.n.dn), cur, after)
+				break
+			end
+			note("tree swap -%s (%d pts) +%s (%d pts)  score %.0f -> %.0f", table.concat(best.rm.names, "+"), best.rm.pts, tostring(best.ad.n.dn), best.ad.cost, cur, after)
+			changed = true
+		end
+		H.recalc()
+		return changed
+	end
+	O.treeSwapPhase = treeSwapPhase
+
 	-- Ascendancy: exhaustive search over sets of up to 4 notables that fit the point budget
 	local function ascSubsetPhase(budget)
 		local spec = build.spec
@@ -600,6 +714,7 @@ function O.run(H, opt)
 				elseif ph == "ascendancyGreedy" then return nodePhase(true, opt.ascPoints or 8)
 				elseif ph == "weapons" then return weaponPhase()
 				elseif ph == "tree" then return nodePhase(false, opt.points or 123)
+				elseif ph == "treeSwap" then return treeSwapPhase(opt.swapRounds or 10)
 				elseif ph == "uniques" then return uniquePhase()
 				elseif ph == "craft" then return craftPhase()
 				end

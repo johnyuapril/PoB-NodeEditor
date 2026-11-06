@@ -483,6 +483,22 @@ return function(H)
 					return { nodes = findNodes(r.text, r.limit) }
 				elseif r.op == "uniques" then
 					return { uniques = uniques(r.slot) }
+				elseif r.op == "optimize" then
+					-- greedy optimisation of the loaded build by PoB's own numbers; the old code comes back for undo
+					local _, undo = H.exportCode()
+					local b = cur()
+					local o = r.options or {}
+					o.phases = o.phases or { "supports", "treeSwap" }
+					o.points = o.points or select(1, build.spec:CountAllocNodes())
+					o.ehpTarget = o.ehpTarget or (b.TotalEHP or 40000)
+					o.iterations = o.iterations or 2
+					if o.lockedNodes then o.locked = {} for _, id in ipairs(o.lockedNodes) do o.locked[tonumber(id)] = true end end
+					local O = dofile(H.here .. "/optimizer.lua")
+					local okO, res = xpcall(function() return O.run({ recalc = H.recalc, warn = H.warn }, o) end, debug.traceback)
+					H.recalc()
+					local a = cur()
+					return { state = state(), undo = undo, before = b, after = a, dpsPct = pctD(a, b), problems = problems(a, b),
+						log = okO and res.log or { tostring(res) }, seconds = okO and res.seconds or nil }
 				elseif r.op == "reservations" then
 					local env = build.calcsTab.mainEnv
 					local out = {}
