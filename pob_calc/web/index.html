@@ -1551,11 +1551,12 @@ function showOpt(r) {
   }
   h += `<div class="s" style="margin-top:6px"><b>바꾼 것과 그때 오른 점수</b>\n${esc(lines.join("\n") || "더 좋아지는 변경을 찾지 못했어요.")}</div>`;
   // validation of the result
-  const CK = { connected: "모든 패시브가 시작점과 이어져 있음", points: "패시브 포인트 안에서 바꿈", ascendancy: "전직 포인트와 전직이 맞음", keystones: "핵심 노드", config: "전투 조건(설정)이 전후 같음", version: "같은 트리·계산 버전" };
+  const CK = { connected: "모든 패시브가 시작점과 이어져 있음", points: "패시브 포인트 안에서 바꿈", weaponSets: "무기 세트 패시브 그대로 (세트 1/2가 24포인트 공유)", ascendancy: "전직 포인트와 전직이 맞음", keystones: "핵심 노드", config: "전투 조건(설정)이 전후 같음", version: "같은 트리·계산 버전" };
   if (r.checks) h += `<div class="s" style="margin-top:6px"><b>검증</b>${r.checks.map((c) => {
     let d = "";
     if (c.key === "points") d = ` (${c.before} → ${c.after} / 최대 ${c.max})`;
     if (c.key === "ascendancy") d = ` (${c.after} / ${c.max})`;
+    if (c.key === "weaponSets") d = ` (세트 1: ${c.before[0]} → ${c.after[0]}, 세트 2: ${c.before[1]} → ${c.after[1]} / 최대 ${c.max})`;
     if (c.key === "connected" && !c.ok) d = `: 끊긴 노드 ${c.detail.map((x) => NN(x.id, x.name)).join(", ")}`;
     if (c.key === "keystones") d = `: ${(c.after || []).map((k) => T(k)).join(", ") || "없음"}${JSON.stringify(c.before) !== JSON.stringify(c.after) ? " (바뀜)" : " (그대로)"}`;
     if (c.key === "config" && !c.ok) d = `: 바뀐 설정 ${c.detail.join(", ")}`;

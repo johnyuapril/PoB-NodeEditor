@@ -244,9 +244,15 @@ function O.run(H, opt)
 		end
 		return n
 	end
+	-- PoB's own budget: every node once, except that weapon set 1 and 2 share their points
+	-- (a node pair in set 1 and set 2 costs one point), so used - min(set1, set2)
 	local function treeUsed()
-		local used = build.spec:CountAllocNodes()
-		return used
+		local used, _, _, _, w1, w2 = build.spec:CountAllocNodes()
+		return used - math.min(w1 or 0, w2 or 0)
+	end
+	local function wsUsed()
+		local _, _, _, _, w1, w2 = build.spec:CountAllocNodes()
+		return w1 or 0, w2 or 0
 	end
 	O.ascUsed = ascUsed
 	local function nodePhase(isAsc, budget)
@@ -300,7 +306,10 @@ function O.run(H, opt)
 	local function treeSwapPhase(rounds)
 		local spec = build.spec
 		local changed = false
-		local function isTravel(x) return x.type == "Normal" and not x.ascendancyName end
+		-- weapon-set nodes (set 1 / set 2) are never refunded or used to pay: they live on their own shared 24 points
+		local function isTravel(x) return x.type == "Normal" and not x.ascendancyName and (x.allocMode or 0) == 0 end
+		local keepMode = spec.allocMode
+		spec.allocMode = 0
 		local function allocDeg(x, gone)
 			local d = 0
 			for _, o in ipairs(x.linked or {}) do if o.alloc and not gone[o] and not o.ascendancyName then d = d + 1 end end
@@ -327,7 +336,7 @@ function O.run(H, opt)
 			-- how much each removable notable is worth per point
 			local rems = {}
 			for _, n in pairs(spec.allocNodes) do
-				if (n.type == "Notable" or n.type == "Keystone") and not n.ascendancyName and not (opt.locked and opt.locked[n.id]) then
+				if (n.type == "Notable" or n.type == "Keystone") and not n.ascendancyName and (n.allocMode or 0) == 0 and not (opt.locked and opt.locked[n.id]) then
 					local set, list = spur(n)
 					local dep = 0 for _ in pairs(n.depends or {}) do dep = dep + 1 end
 					if dep <= 1 then
@@ -388,11 +397,20 @@ function O.run(H, opt)
 				if okc and out then local sc = score(out) if sc > bestS then best, bestS = pr, sc end end
 			end
 			if not best then break end
+			local w1b, w2b = wsUsed()
 			for i = #best.rm.list, 1, -1 do local x = best.rm.list[i] if x.alloc then spec:DeallocNode(x) end end
 			spec:BuildAllDependsAndPaths()
 			local target = spec.nodes[best.ad.n.id]
 			if target and not target.alloc and target.path then spec:AllocNode(target) end
 			local after = current()
+			-- the real allocation must stay inside the point budget and leave both weapon sets as they were
+			-- (a normal path through a weapon-set branch turns those nodes into normal ones in PoB)
+			local w1a, w2a = wsUsed()
+			local overBudget = treeUsed() > (opt.points or treeUsed()) or w1a ~= w1b or w2a ~= w2b
+			if overBudget then
+				note("tree swap -%s +%s rejected (points %d/%d, weapon sets %d/%d -> %d/%d), reverted", table.concat(best.rm.names, "+"), tostring(best.ad.n.dn), treeUsed(), opt.points or 0, w1b, w2b, w1a, w2a)
+				after = -1
+			end
 			if after < cur * 0.999 then
 				-- the real allocation came out worse than the estimate: put the old notable back
 				if target and target.alloc then local _, tl = spur(target) for i = #tl, 1, -1 do if tl[i].alloc then spec:DeallocNode(tl[i]) end end end
@@ -404,6 +422,7 @@ function O.run(H, opt)
 			note("tree swap -%s (%d pts) +%s (%d pts)  score %.0f -> %.0f", table.concat(best.rm.names, "+"), best.rm.pts, tostring(best.ad.n.dn), best.ad.cost, cur, after)
 			changed = true
 		end
+		spec.allocMode = keepMode
 		H.recalc()
 		return changed
 	end

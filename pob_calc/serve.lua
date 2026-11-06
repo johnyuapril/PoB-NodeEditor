@@ -517,7 +517,7 @@ return function(H)
 					for k, v in pairs(build.configTab.input or {}) do if type(v) ~= "table" then cfg0[k] = v end end
 					local o = r.options or {}
 					o.phases = o.phases or { "supports", "treeSwap" }
-					o.points = o.points or select(1, build.spec:CountAllocNodes())
+					o.points = o.points or treeAlloc().used   -- PoB's count: weapon sets 1 and 2 share their points
 					o.ehpTarget = o.ehpTarget or (b.TotalEHP or 40000)
 					o.iterations = o.iterations or 2
 					if o.lockedNodes then o.locked = {} for _, id in ipairs(o.lockedNodes) do o.locked[tonumber(id)] = true end end
@@ -538,6 +538,8 @@ return function(H)
 					local checks = {
 						{ key = "connected", ok = #newOrphans == 0, detail = newOrphans },
 						{ key = "points", ok = v1.alloc.used <= math.max(v0.alloc.used, v0.alloc.usedMax), before = v0.alloc.used, after = v1.alloc.used, max = v1.alloc.usedMax },
+						{ key = "weaponSets", ok = v1.alloc.ws1 == v0.alloc.ws1 and v1.alloc.ws2 == v0.alloc.ws2 and v1.alloc.ws1 <= v1.alloc.wsMax and v1.alloc.ws2 <= v1.alloc.wsMax,
+							before = { v0.alloc.ws1, v0.alloc.ws2 }, after = { v1.alloc.ws1, v1.alloc.ws2 }, max = v1.alloc.wsMax },
 						{ key = "ascendancy", ok = v1.alloc.asc <= v1.alloc.ascMax and #v1.wrongAsc == 0, before = v0.alloc.asc, after = v1.alloc.asc, max = v1.alloc.ascMax },
 						{ key = "keystones", ok = true, before = v0.keystones, after = v1.keystones },
 						{ key = "config", ok = #cfgChanged == 0, detail = cfgChanged },
