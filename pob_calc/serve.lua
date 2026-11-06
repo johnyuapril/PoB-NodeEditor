@@ -23,6 +23,9 @@ return function(H)
 		return s
 	end
 	local function cur() return stats(build.calcsTab.mainOutput or {}) end
+	-- the number the editor shows as DPS: main skill (or its minions), Full DPS only when nothing else is there
+	local function dpsS(s) return math.max(s.CombinedDPS or 0, s.MinionDPS or 0) > 0 and math.max(s.CombinedDPS or 0, s.MinionDPS or 0) or (s.FullDPS or 0) end
+	local function pctD(s, b) local x, y = dpsS(s), dpsS(b) return y ~= 0 and (x - y) / y * 100 or nil end
 
 	local function nodeInfo(n)
 		return { id = n.id, name = n.dn, type = n.type, asc = n.ascendancyName, stats = n.sd, points = n.path and #n.path or nil, alloc = n.alloc or false,
@@ -34,7 +37,8 @@ return function(H)
 		for _, list in ipairs({ it.implicitModLines or {}, it.explicitModLines or {} }) do
 			for _, l in ipairs(list) do lines[#lines+1] = l.line end
 		end
-		return { slot = slotName, name = it.name, base = it.baseName, rarity = it.rarity, type = it.type, mods = lines }
+		local okRaw, raw = pcall(function() return it:BuildRaw() end)
+		return { slot = slotName, name = it.name, base = it.baseName, rarity = it.rarity, type = it.type, mods = lines, raw = okRaw and raw or nil, id = it.id }
 	end
 
 	local function state()
@@ -64,6 +68,7 @@ return function(H)
 	-- path nodes allocated on behalf of a requested node, so removing it also removes the path it brought
 	local brought = {}
 
+	local itemGroupPos, collateral = {}, {}
 	local function equip(slotName, item)
 		local newItem = new("Item"):Item(item:BuildRaw())
 		newItem:NormaliseQuality()
@@ -157,6 +162,8 @@ return function(H)
 			elseif e.unique then
 				local it = findUnique(e.unique)
 				if it then equip(e.slot, it) else H.warn("unique not found: " .. e.unique) end
+			elseif e.id and build.itemsTab.items[e.id] then
+				slot:SetSelItemId(e.id) build.itemsTab:PopulateSlots() build.buildFlag = true
 			elseif e.raw then
 				local ok, err = pcall(function() equip(e.slot, new("Item"):Item(e.raw)) end)
 				if not ok then H.warn("item failed: " .. tostring(err)) end
@@ -164,7 +171,31 @@ return function(H)
 		end
 		for _, s in ipairs(r.unequip or {}) do
 			local slot = build.itemsTab.slots[s]
-			if slot then slot:SetSelItemId(0) build.itemsTab:PopulateSlots() build.buildFlag = true end
+			if slot then
+				-- skills the item grants lose their socket group while it is off; remember where it sat so switching
+				-- the item back on puts it in the same place (group order changes what PoB calculates)
+				for gi, g in ipairs(build.skillsTab.socketGroupList) do
+					if g.source and g.slot == s then itemGroupPos[g.source .. "|" .. s] = gi end
+				end
+				-- a quiver drops off with its bow, an off-hand with a two-hander: remember those too
+				local had = {}
+				for name, sl in pairs(build.itemsTab.slots) do if name ~= s and (sl.selItemId or 0) ~= 0 then had[name] = sl.selItemId end end
+				slot:SetSelItemId(0) build.itemsTab:PopulateSlots() build.buildFlag = true
+				local lost = {}
+				for name, id in pairs(had) do if (build.itemsTab.slots[name].selItemId or 0) == 0 then lost[name] = id end end
+				if next(lost) then collateral[s] = lost end
+			end
+		end
+		for _, e in ipairs(r.equip or {}) do
+			local lost = collateral[e.slot]
+			if lost then
+				collateral[e.slot] = nil
+				for name, id in pairs(lost) do
+					local sl = build.itemsTab.slots[name]
+					if sl and (sl.selItemId or 0) == 0 and build.itemsTab.items[id] then sl:SetSelItemId(id) end
+				end
+				build.itemsTab:PopulateSlots() build.buildFlag = true
+			end
 		end
 		if r.setGroup then setGroup(r.setGroup.index, r.setGroup.text) end
 		if r.addGroup then setGroup(nil, r.addGroup) end
@@ -178,6 +209,22 @@ return function(H)
 		runCallback("OnFrame")
 		if r.mainSkill then H.selectMainSkill(r.mainSkill) end
 		H.recalc()
+		if r.equip and next(itemGroupPos) then
+			local list, moved = build.skillsTab.socketGroupList, false
+			local main = list[build.mainSocketGroup]
+			for gi = #list, 1, -1 do
+				local g = list[gi]
+				local want = g.source and itemGroupPos[g.source .. "|" .. tostring(g.slot)]
+				if want and want ~= gi and want <= #list then
+					table.remove(list, gi) table.insert(list, want, g)
+					itemGroupPos[g.source .. "|" .. tostring(g.slot)] = nil moved = true
+				end
+			end
+			if moved then
+				for gi, g in ipairs(list) do if g == main then build.mainSocketGroup = gi build.calcsTab.input.skill_number = gi end end
+				H.recalc()
+			end
+		end
 	end
 
 	local function preview(cands)
@@ -197,7 +244,7 @@ return function(H)
 					build.buildFlag = true
 					H.recalc()
 					res[i] = { ok = true, stats = s,
-						dpsPct = (b.FullDPS or 0) ~= 0 and ((s.FullDPS or 0) - b.FullDPS) / b.FullDPS * 100 or nil,
+						dpsPct = pctD(s, b),
 						ehpPct = (b.TotalEHP or 0) ~= 0 and ((s.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
 				else
 					res[i] = { ok = false, error = "gem not added" }
@@ -233,7 +280,7 @@ return function(H)
 			if ok and out then
 				local s = stats(out)
 				res[i] = { ok = true, stats = s, points = info.points,
-					dpsPct = (b.FullDPS or 0) ~= 0 and ((s.FullDPS or 0) - b.FullDPS) / b.FullDPS * 100 or nil,
+					dpsPct = pctD(s, b),
 					ehpPct = (b.TotalEHP or 0) ~= 0 and ((s.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
 			else
 				res[i] = { ok = false, error = tostring(out) }
@@ -241,6 +288,51 @@ return function(H)
 			::continue_cand::
 		end
 		return { base = b, results = res }
+	end
+
+	-- every support gem that can go into socket group gi, with what it does to that skill's DPS and to the main skill
+	local function supportOptions(gi, names)
+		local g = build.skillsTab.socketGroupList[gi or build.mainSocketGroup]
+		if not g then return { ok = false, error = "no group" } end
+		local have = {}
+		for _, gem in ipairs(g.gemList) do if gem.gemData then have[gem.gemData.name] = true end end
+		local want
+		if names then want = {} for _, n in ipairs(names) do want[n] = true end end
+		local cands = {}
+		for id, gd in pairs(build.data.gems) do
+			local ge = gd.grantedEffect
+			if ge and ge.support and not ge.legacy and not have[gd.name] and (not want or want[gd.name]) then
+				for _, sk in ipairs(g.displaySkillList or {}) do
+					if calcLib.canGrantedEffectSupportActiveSkill(ge, sk) then cands[#cands+1] = gd break end
+				end
+			end
+		end
+		local calcFunc, mainBase = build.calcsTab:GetMiscCalculator()
+		local function dpsOf(o) if not o then return 0 end local m = o.Minion and o.Minion.CombinedDPS or 0 return math.max(o.CombinedDPS or 0, m) end
+		local ov = { mainSocketGroup = gi }
+		local okb, skillBase = pcall(calcFunc, ov, false)
+		local sb = okb and dpsOf(skillBase) or 0
+		local mb = dpsOf(mainBase)
+		local eb = mainBase.TotalEHP or 0
+		local function pct(a, b) return b ~= 0 and (a - b) / b * 100 or nil end
+		local res = {}
+		for _, gd in ipairs(cands) do
+			g.gemList[#g.gemList+1] = { nameSpec = gd.name, gemId = gd.id, skillId = gd.grantedEffectId, gemData = gd, level = gd.naturalMaxLevel or 1,
+				quality = 0, count = 1, enabled = true, enableGlobal1 = true, enableGlobal2 = true, corrupted = false, corruptLevel = 0 }
+			build.skillsTab:ProcessSocketGroup(g)
+			local ok1, so = pcall(calcFunc, ov, false)
+			local ok2, mo = true, so
+			if gi ~= build.mainSocketGroup then ok2, mo = pcall(calcFunc, nil, false) end
+			table.remove(g.gemList)
+			build.skillsTab:ProcessSocketGroup(g)
+			res[#res+1] = { name = gd.name, lineage = gd.grantedEffect.isLineage or false, ok = ok1 and ok2,
+				skillPct = ok1 and pct(dpsOf(so), sb) or nil, mainPct = ok2 and pct(dpsOf(mo), mb) or nil,
+				ehpPct = ok2 and mo and pct(mo.TotalEHP or 0, eb) or nil }
+		end
+		build.skillsTab:ProcessSocketGroup(g)
+		build.buildFlag = true
+		H.recalc()
+		return { ok = true, group = gi, skillDPS = sb, mainDPS = mb, isMain = gi == build.mainSocketGroup, options = res }
 	end
 
 	local function findNodes(text, limit)
@@ -316,6 +408,8 @@ return function(H)
 					return { nodes = findNodes(r.text, r.limit) }
 				elseif r.op == "uniques" then
 					return { uniques = uniques(r.slot) }
+				elseif r.op == "supportOptions" then
+					return supportOptions(r.group, r.names)
 				elseif r.op == "gems" then
 					return { gems = gemList(r.support) }
 				elseif r.op == "update" then
