@@ -61,6 +61,16 @@ return function(H)
 		return { slot = slotName, name = it.name, base = it.baseName, rarity = it.rarity, type = it.type, mods = lines, raw = okRaw and raw or nil, id = it.id }
 	end
 
+	-- the two weapon sets: what is in each hand, and which one PoB is calculating with
+	local function weaponSets()
+		local it = build.itemsTab
+		local function nm(slot) local sl = it.slots[slot] local item = sl and it.items[sl.selItemId or 0] return item and (item.name or item.baseName) or nil end
+		local act = it.activeItemSet and it.activeItemSet.useSecondWeaponSet and 2 or 1
+		local env = build.calcsTab.mainEnv
+		return { active = act, calc = env and env.weaponSet or act,
+			set1 = { nm("Weapon 1"), nm("Weapon 2") }, set2 = { nm("Weapon 1 Swap"), nm("Weapon 2 Swap") } }
+	end
+
 	local function state()
 		local nodes = {}
 		for id, n in pairs(build.spec.allocNodes) do
@@ -78,7 +88,7 @@ return function(H)
 		end
 		return { class = build.spec.curClassName, ascendancy = build.spec.curAscendClassName, level = build.characterLevel,
 			points = select(1, build.spec:CountAllocNodes()), nodes = nodes, items = items, skills = H.listSkills(),
-			mainGroup = build.mainSocketGroup, config = cfg, stats = cur() }
+			mainGroup = build.mainSocketGroup, config = cfg, stats = cur(), weapons = weaponSets() }
 	end
 
 	local function treeAlloc()
@@ -659,6 +669,32 @@ return function(H)
 						out.layout = { nodes = nodes, radii = radii, version = spec.treeVersion }
 					end
 					return out
+				elseif r.op == "weaponSet" then
+					-- the main weapon: switch PoB's active weapon set; if the main skill is tied to the other set,
+					-- move the main skill to the strongest skill of the chosen set
+					local want = tonumber(r.set) == 2
+					build.itemsTab.activeItemSet.useSecondWeaponSet = want
+					build.itemsTab:PopulateSlots()
+					build.buildFlag = true
+					local list = build.skillsTab.socketGroupList
+					local target = want and 2 or 1
+					if r.mainGroup and list[r.mainGroup] then
+						build.mainSocketGroup = r.mainGroup build.calcsTab.input.skill_number = r.mainGroup
+					elseif build.skillsTab:GetSocketGroupWeaponSet(list[build.mainSocketGroup]) ~= target then
+						local best, bestD = nil, -1
+						for gi, g in ipairs(list) do
+							if g.enabled ~= false and build.skillsTab:GetSocketGroupWeaponSet(g) == target then
+								build.mainSocketGroup = gi build.calcsTab.input.skill_number = gi build.buildFlag = true H.recalc()
+								local d = dpsS(cur())
+								if d > bestD then best, bestD = gi, d end
+							end
+						end
+						if best then build.mainSocketGroup = best build.calcsTab.input.skill_number = best end
+					end
+					build.buildFlag = true
+					H.recalc()
+					local a = cur()
+					return { state = state(), before = before, after = a, delta = H.delta(before, a) }
 				elseif r.op == "treeMode" then
 					-- where new points go: 0 normal, 1/2 weapon set; which attribute an attribute node takes
 					if r.allocMode then build.spec.allocMode = r.allocMode end

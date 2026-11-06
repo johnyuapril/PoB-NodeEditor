@@ -330,7 +330,11 @@ local function listSkills()
 		for _, gem in ipairs(g.gemList or {}) do
 			gems[#gems+1] = { name = gem.nameSpec, level = gem.level, quality = gem.quality, enabled = gem.enabled, valid = gem.gemData ~= nil }
 		end
-		res[#res+1] = { index = i, label = g.displayLabel, enabled = g.enabled, slot = g.slot, gems = gems }
+		-- which weapon set PoB calculates this group with (fixed by its item, by its set1/set2 flags, or the active set)
+		local okW, ws = pcall(function() return build.skillsTab:GetSocketGroupWeaponSet(g) end)
+		local okL, locked = pcall(function() return build.skillsTab:IsSocketGroupWeaponSetLocked(g) end)
+		local fixed = (okL and locked) or g.set1 == false or g.set2 == false
+		res[#res+1] = { index = i, label = g.displayLabel, enabled = g.enabled, slot = g.slot, gems = gems, weaponSet = okW and ws or nil, setFixed = fixed and true or false }
 	end
 	return res
 end

@@ -137,6 +137,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
   <div id="top">
     <strong>PoB 노드 편집기</strong>
     <select id="examples"><option value="">예시 빌드…</option></select>
+    <select id="mainWeapon" title="주력 무기 세트: PoB가 이 무기로 계산하고, 최적화도 이 무기의 주 스킬을 기준으로 합니다. 이동기용 보조 무기는 여기서 빼 두세요"></select>
     <select id="mainSkill" title="주 스킬 (PoB의 주 스킬 선택과 같음)"></select>
     <textarea id="code" placeholder="PoB 빌드 코드 붙여넣기"></textarea>
     <button class="primary" id="load">불러오기</button>
@@ -1466,7 +1467,8 @@ async function renderWhy(P) {
 let optResult = null, optUndo = [];
 function renderOpt(P) {
   const ck = (id, label, on, tip) => `<label class="small" style="display:block;margin:3px 0" title="${tip}"><input type="checkbox" id="${id}" ${on ? "checked" : ""}> ${label}</label>`;
-  P.innerHTML = `<div class="small" style="margin-bottom:6px">지금 빌드를 PoB 계산으로 하나씩 바꿔 보며 더 좋아지는 변경만 남깁니다. 정신력·보조 칸 5개·능력치 요구 같은 실제 제약을 지킵니다.</div>
+  const wsel = $("#mainWeapon").selectedOptions[0], ssel = $("#mainSkill").selectedOptions[0];
+  P.innerHTML = `<div class="item" style="margin-bottom:6px"><div class="small">기준: <b>${esc(wsel ? wsel.text : "")}</b><br>주 스킬: <b>${esc(ssel ? ssel.text : "")}</b><br>다르면 위쪽에서 주력 무기와 주 스킬을 먼저 바꿔 주세요.</div></div><div class="small" style="margin-bottom:6px">지금 빌드를 PoB 계산으로 하나씩 바꿔 보며 더 좋아지는 변경만 남깁니다. 정신력·보조 칸 5개·능력치 요구 같은 실제 제약을 지킵니다.</div>
     ${ck("o_sup", "주 스킬 보조젬 채우기·교체", true, "빈 칸을 채우고, 더 나은 보조젬이 있으면 바꾸고, 손해인 젬은 뺍니다")}
     ${ck("o_tree", "패시브 교체 (포인트 수 그대로)", true, "가장 약한 주요 노드와 그 노드로만 가는 길을 빼고, 그 포인트로 더 좋은 주요 노드를 찍습니다")}
     ${ck("o_spirit", "유지 스킬 추가 (남는 정신력 안에서만)", false, "정신력이 남을 때만 오라·전령 같은 유지 스킬을 추가합니다")}
@@ -1676,13 +1678,28 @@ function renderMainSkill() {
   sel.innerHTML = S.skills.map((g, i) => {
     const act = g.gems.filter((x) => !(G.entities["gem:" + x.name] && ["support", "lineage"].includes(G.entities["gem:" + x.name].k)));
     const nm = act.map((x) => T(x.name)).join(" / ") || g.label || ("그룹 " + (i + 1));
-    return `<option value="${i + 1}" ${S.mainGroup === i + 1 ? "selected" : ""}>${esc(nm)}${g.enabled === false ? " (꺼짐)" : ""}</option>`;
+    const ws = g.setFixed && g.weaponSet ? ` · 무기 ${g.weaponSet}` : "";
+    return `<option value="${i + 1}" ${S.mainGroup === i + 1 ? "selected" : ""}>${esc(nm)}${ws}${g.enabled === false ? " (꺼짐)" : ""}</option>`;
   }).join("");
+  // main weapon: which weapon set PoB (and the optimiser) treats as the one that does the work
+  const w = S.weapons, mw = $("#mainWeapon");
+  if (!w) { mw.style.display = "none"; return; }
+  const nm2 = (arr) => arr.filter(Boolean).map((x) => { const [n, b] = x.split(", "); return b ? `${T(n)} (${T(b)})` : T(n); }).join(" + ") || "비어 있음";
+  mw.style.display = "";
+  mw.innerHTML = [1, 2].map((k) => `<option value="${k}" ${w.calc === k ? "selected" : ""}>주력 무기 ${k}: ${esc(nm2(w["set" + k]))}</option>`).join("");
 }
+$("#mainWeapon").addEventListener("change", async (e) => {
+  prev = S.stats; const snap = snapIds();
+  const r = await api({ op: "weaponSet", set: +e.target.value });
+  if (!r.ok) return;
+  S = r.state; base0 = S.stats; skillCache.clear();
+  renderMainSkill(); await syncConfig(); markNew(snap);
+  showMsg(`주력 무기를 ${e.target.value}번 세트로 바꿨어요. 주 스킬: ${$("#mainSkill").selectedOptions[0] ? $("#mainSkill").selectedOptions[0].text : ""}`);
+});
 $("#mainSkill").addEventListener("change", async (e) => {
   prev = S.stats;
   const r = await api({ op: "apply", mainSkill: +e.target.value });
-  if (r.ok) { S = r.state; base0 = S.stats; render(); }
+  if (r.ok) { S = r.state; base0 = S.stats; renderMainSkill(); render(); }
 });
 $("#load").addEventListener("click", () => loadBuild($("#code").value));
 $("#showCommon").addEventListener("change", render);
