@@ -48,6 +48,10 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card.pill { border-radius: 16px; }
 .card.off { opacity: .4; }
 .card.sel { outline: 3px solid #ff5a3d; outline-offset: 1px; }
+.card.dim { opacity: .28; }
+.card.off.dim { opacity: .15; }
+.stl { font-size: 10px; color: #8fa3bf; padding: 0 12px; height: 18px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid rgba(255,255,255,.05); }
+.prow[data-stat] { cursor: pointer; } .prow.on { background: rgba(143,163,191,.18); }
 .card .h { display: flex; align-items: center; gap: 6px; padding: 0 8px; cursor: move; border-radius: 6px 6px 0 0; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.6); }
 .card .h.pillh { border-radius: 16px; padding: 0 12px; }
 .card .h .glyph { font-weight: 700; opacity: .9; }
@@ -103,6 +107,7 @@ h3 { margin: 10px 0 6px; font-size: 12px; color: var(--dim); text-transform: upp
     <textarea id="code" placeholder="PoB 빌드 코드 붙여넣기"></textarea>
     <button class="primary" id="load">불러오기</button>
     <label class="small"><input type="checkbox" id="showCommon" checked> 상황 조건도 표시</label>
+    <label class="small" title="꺼 두면 선은 흐리게만 보이고, 카드를 누르면 그 카드와 이어진 경로만 진하게 보입니다"><input type="checkbox" id="allWires"> 선 진하게</label>
     <label class="small"><input type="checkbox" id="hideBare" checked> 연결 없는 카드 숨기기</label>
     <label class="small" title="치명타 확률, 치명타 피해 보너스, 속도처럼 전체에 적용되는 능력치를 '전역 효과' 카드로 모아 봅니다"><input type="checkbox" id="showStats" checked> 전역 효과</label>
     <label class="small" title="PoB가 해석하지 못한 문장에서 단어로 읽은 연결(점선)을 숨깁니다"><input type="checkbox" id="hideGuess"> 추정 연결 숨기기</label><span class="small" id="hiddenInfo"></span>
@@ -300,7 +305,7 @@ function portsOf(c) {
   if (c.kind === "global") return { ins: stats ? e.in : [], outs: [] };
   // a situational output nobody in the build uses is noise: hide it
   const outs = e.out.filter((p) => ok(p, "out") && (!G.ports[p].common || !CONSUMED || CONSUMED.has(p)));
-  return { ins: e.in.filter((p) => ok(p, "in")), outs: stats ? outs.concat(e.st || []) : outs };
+  return { ins: e.in.filter((p) => ok(p, "in")), outs };   // global stats are listed on the card, not wired
 }
 
 // ------------------------------------------------------------------ connection state
@@ -401,12 +406,13 @@ const srcOf = (c, d, pn) => ((c.ent && c.ent.src) || {})[d + ":" + pn];
 const sameGroup = (a, b) => a.gem && b.gem && a.gem.group === b.gem.group;
 const groupPort = (a, b, pn) => pn === "Trigger" && a.gem && b.gem;
 const linkOK = (a, b, pn) => groupPort(a, b, pn) ? (b.triggeredBy ? b.triggeredBy === a.key : sameGroup(a, b)) : ((!isLocal(a, pn) && !isLocal(b, pn)) || sameGroup(a, b));
+const stLine = (c) => c.kind !== "global" && c.ent && (c.ent.st || []).length && $("#showStats").checked ? 18 : 0;
 const nSock = (c) => (SOCK[c.key] ? Math.max(SOCKETS, SOCK[c.key].length) : 0);
 // supports live inside their skill card: one block per socket, as tall as its longest pin column
 const sockRows = (g) => { if (!g) return 1; const p = portsOf(g); return Math.max(1, p.ins.length, p.outs.length); };
 const sockH = (c) => { const n = nSock(c); if (!n) return 0; let h = 0; for (let i = 0; i < n; i++) h += sockRows(SOCK[c.key][i]) * SROW; return h + 7; };
 let EMB = {};   // support card key -> skill card key it is socketed in
-function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + sockH(c) + st.row * Math.max(ins.length, outs.length) + (st.pill ? 4 : 8); }
+function cardH(c) { const { ins, outs } = portsOf(c), st = ST(c); return st.head + sockH(c) + st.row * Math.max(ins.length, outs.length) + stLine(c) + (st.pill ? 4 : 8); }
 function layout(list) {
   // default positions: situation on top, each skill group = its support pills on the left + skill node(s) on the right,
   // then items, passives and ascendancy columns. Saved (dragged) positions win.
@@ -458,7 +464,7 @@ function gval(p) {
   if (p === "stat:Speed" && s.Speed != null) return s.Speed.toFixed(2) + "/초";
   return "";
 }
-let SRCN = {};
+let SRCN = {}, FOCUS = null, statSel = null;
 const srcCount = (p) => SRCN[p] || 0;
 function render() {
   CONSUMED = null;
@@ -466,13 +472,25 @@ function render() {
   CONSUMED = new Set(all.filter((c) => c.ent && !c.off).flatMap((c) => c.ent.in));
   SRCN = {}; all.forEach((c) => { if (c.ent && !c.off && c.kind !== "global") (c.ent.st || []).forEach((p) => { SRCN[p] = (SRCN[p] || 0) + 1; }); });
   const hide = $("#hideBare").checked;
-  const has = (c) => { const p = portsOf(c); return p.ins.length || p.outs.length; };
+  const has = (c) => { const p = portsOf(c); return p.ins.length || p.outs.length || stLine(c); };
   const liveGroups = new Set(all.filter((c) => c.gem && has(c)).map((c) => c.gem.group));
   if (S) liveGroups.add(S.mainGroup);
   const list = hide ? all.filter((c) => has(c) || c.ghost || c.key === selected || (c.gem && liveGroups.has(c.gem.group))) : all;
   const hiddenN = all.length - list.length;
   buildSockets(list);
   layout(list);
+  // what to light up: a selected card (plus, after the wires are known, its whole path) or every source of one global stat
+  FOCUS = null;
+  if (statSel) FOCUS = new Set(list.filter((c) => !c.off && c.ent && (c.ent.st || []).includes(statSel)).map((c) => c.key).concat(["global"]));
+  else if (selected && list.some((c) => c.key === selected)) {
+    const links = [];
+    list.forEach((a) => { if (!a.off) portsOf(a).outs.forEach((pn) => list.forEach((b) => {
+      if (b !== a && !b.off && portsOf(b).ins.includes(pn) && linkOK(a, b, pn) && (EMB[a.key] || a.key) !== (EMB[b.key] || b.key)) links.push([a.key, b.key]);
+    })); });
+    const seeds = [selected, ...(SOCK[selected] || []).map((g) => g.key)];
+    const walk = (from, to) => { const seen = new Set(seeds), q = [...seeds]; while (q.length) { const k = q.shift(); links.forEach((l) => { if (l[from] === k && !seen.has(l[to])) { seen.add(l[to]); q.push(l[to]); } }); } return seen; };
+    FOCUS = new Set([...walk(0, 1), ...walk(1, 0)]);
+  }
   const ps = portState(list);
   const world = $("#world");
   world.querySelectorAll(".card").forEach((n) => n.remove());
@@ -488,7 +506,7 @@ function render() {
     let rowsHtml = "";
     for (let i = 0; i < rows; i++) {
       const a = ins[i], b = outs[i];
-      if (c.kind === "global") { rowsHtml += `<div class="prow" style="height:${st.row}px;line-height:${st.row}px"><span style="color:${PC(a)};max-width:70%">${esc(PN(a))}</span><span class="small">${esc(gval(a))} · ${srcCount(a)}곳</span></div>`; continue; }
+      if (c.kind === "global") { rowsHtml += `<div class="prow ${statSel === a ? "on" : ""}" data-stat="${a}" style="height:${st.row}px;line-height:${st.row}px" title="누르면 이 능력치를 주는 카드만 밝게"><span data-stat="${a}" style="color:${PC(a)};max-width:70%">${esc(PN(a))}</span><span class="small">${esc(gval(a))} · ${srcCount(a)}곳</span></div>`; continue; }
       rowsHtml += `<div class="prow" style="height:${st.row}px;line-height:${st.row}px"><span data-port="${a || ""}" data-dir="in" style="color:${a ? PC(a) : ""}" title="${esc(a ? TL(c.ent.ev["in:" + a] || "") : "")}">${a ? esc(PN(a)) + (isLocal(c, a) ? ' <i class="selfmark">이 스킬</i>' : "") : ""}</span><span data-port="${b || ""}" data-dir="out" style="color:${b ? PC(b) : ""}" title="${esc(b ? TL(c.ent.ev["out:" + b] || "") : "")}">${b ? esc(PN(b)) : ""}</span></div>`;
     }
     const sub = c.kind === "rare" || c.kind === "unique" ? T(c.slot) : "";
@@ -539,10 +557,13 @@ function render() {
       }
       sockHtml += `</div>`;
     }
-    el.innerHTML = head + sockHtml + `<div class="ports">${rowsHtml}</div>` + el.innerHTML;
+    const stl = stLine(c) ? `<div class="stl" title="${esc(c.ent.st.map(PN).join(', '))}">능력치: ${esc(c.ent.st.map(PN).join(' · '))}</div>` : "";
+    el.innerHTML = head + sockHtml + `<div class="ports">${rowsHtml}</div>` + stl + el.innerHTML;
+    if (FOCUS) el.classList.add(FOCUS.has(c.key) || (SOCK[c.key] || []).some((g) => FOCUS.has(g.key)) ? "hl" : "dim");
     const off0 = st.head + sockH(c);
     const pinY = (i) => off0 + i * st.row + st.row / 2;
     ins.forEach((pn, i) => {
+      if (c.kind === "global") return;
       const d = document.createElement("div");
       const local = isLocal(c, pn);
       const missing = local ? false : !ps.prod[pn];
@@ -570,17 +591,19 @@ function render() {
       const a = ev.target.dataset.a;
       if (a === "toggle") return toggleCard(c);
       if (a === "remove") return removeCard(c);
+      const stp = ev.target.dataset.stat || (ev.target.closest("[data-stat]") || {}).dataset?.stat;
+      if (stp) { statSel = statSel === stp ? null : stp; selected = null; render(); return; }
       const gk = ev.target.dataset.gk, gc = gk && list.find((x) => x.key === gk);
       if (gc && a === "gtoggle") return toggleCard(gc);
       if (gc && a === "gremove") return removeCard(gc);
-      if (gc) { selected = gc.key; showDetail(gc); render(); return; }
+      if (gc) { selected = selected === gc.key ? null : gc.key; statSel = null; if (selected) showDetail(gc); render(); return; }
       if (ev.target.closest(".srow.empty") || (ev.target.dataset.sock != null && !SOCK[c.key][+ev.target.dataset.sock])) {
         gemTarget = { group: c.gem.group, name: c.name }; setTab("gem"); return;
       }
       const port = ev.target.dataset.port;
       if (port && c.virtual) return togglePort(port);
       if (port) { portFilter = { port, dir: ev.target.dataset.dir }; setTab("port"); return; }
-      selected = c.key; showDetail(c); render();
+      selected = selected === c.key ? null : c.key; statSel = null; if (selected) showDetail(c); render();
     });
     world.appendChild(el);
   });
@@ -593,6 +616,7 @@ function render() {
     const k = a.groupKey(), s = exec[a.key + "|out"], t = exec[a.key + "|to"];
     if (s && t && !EMB[a.key]) paths += wire(s, t, a.kind === "lineage" ? "#e5c25a" : "#b9aaff", { on: !a.off, w: 2.5, title: `${a.name} → ${list.find((x) => x.key === k)?.name || ""} (${KNAME[a.kind]})` });
   });
+  const edges = [];
   list.forEach((a) => {
     if (a.off) return;
     portsOf(a).outs.forEach((pn) => {
@@ -600,14 +624,21 @@ function render() {
         if (b === a || b.off || !portsOf(b).ins.includes(pn) || !linkOK(a, b, pn)) return;
         if ((EMB[a.key] || a.key) === (EMB[b.key] || b.key)) return;   // inside one skill card: shown by the shared row, no wire
         const s = dots[a.key + "|out|" + pn], t = dots[b.key + "|in|" + pn];
-        if (!s || !t) return;
-        const inCycle = cyc.edge.has(a.key + ">" + b.key);
-        if (pn.startsWith("stat:")) { paths += wire(s, t, PC(pn), { on: true, w: 1.2, op: 0.45, title: `${PN(pn)}: ${a.name} → 전역 효과` }); return; }
-        const guess = srcOf(a, "out", pn) === "guess" || srcOf(b, "in", pn) === "guess";
-        paths += wire(s, t, PC(pn), { on: ps.active[pn], w: inCycle ? 4 : guess ? 1.5 : 2, glow: inCycle, port: pn, dash: guess ? "2 4" : null,
-          title: `${PN(pn)}: ${a.name} → ${b.name}${inCycle ? " (순환 고리)" : ""}${guess ? " (추정: PoB가 해석하지 못한 문장에서 읽음)" : ""} — 누르면 ${ps.active[pn] ? "끊기" : "잇기"}` });
+        if (s && t) edges.push({ a, b, pn, s, t });
       });
     });
+  });
+  const bright = $("#allWires").checked;
+  edges.forEach(({ a, b, pn, s, t }, i) => {
+    const inCycle = cyc.edge.has(a.key + ">" + b.key);
+    const guess = srcOf(a, "out", pn) === "guess" || srcOf(b, "in", pn) === "guess";
+    const key = pn === "Trigger" || pn === "Energy";
+    let op = null;
+    const hotE = FOCUS && !statSel && FOCUS.has(a.key) && FOCUS.has(b.key);
+    if (FOCUS) op = hotE ? 1 : 0.04;
+    else if (!bright && !key && !inCycle) op = ps.active[pn] ? 0.16 : 0.08;
+    paths += wire(s, t, PC(pn), { on: ps.active[pn], op, w: hotE || inCycle ? 3 : guess ? 1.5 : 2, glow: inCycle || hotE, port: pn, dash: guess ? "2 4" : null,
+      title: `${PN(pn)}: ${a.name} → ${b.name}${inCycle ? " (순환 고리)" : ""}${guess ? " (추정: PoB가 해석하지 못한 문장에서 읽음)" : ""} — 누르면 ${ps.active[pn] ? "끊기" : "잇기"}` });
   });
   svg.innerHTML = paths;
   svg.querySelectorAll("path[data-port]").forEach((p) => p.addEventListener("click", () => togglePort(p.dataset.port)));
@@ -950,6 +981,7 @@ $("#showCommon").addEventListener("change", render);
 $("#hideBare").addEventListener("change", render);
 $("#showStats").addEventListener("change", render);
 $("#hideGuess").addEventListener("change", render);
+$("#allWires").addEventListener("change", render);
 $("#exportBtn").addEventListener("click", async () => { const r = await api({ op: "export" }); if (r.ok) { $("#export").value = r.code; $("#export").select(); } });
 $("#examples").addEventListener("change", (e) => { if (e.target.value) { $("#code").value = e.target.value; loadBuild(e.target.value); } });
 
