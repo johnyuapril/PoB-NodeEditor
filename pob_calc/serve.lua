@@ -335,6 +335,39 @@ return function(H)
 		return { ok = true, group = gi, skillDPS = sb, mainDPS = mb, isMain = gi == build.mainSocketGroup, options = res }
 	end
 
+	-- what each piece of the build is worth: take it out alone (item slot, tree node, gem) and measure
+	local function contrib(parts)
+		local calcFunc, baseOut = build.calcsTab:GetMiscCalculator()
+		local b = stats(baseOut)
+		local res = {}
+		for i, c in ipairs(parts or {}) do
+			local ok, out
+			if c.slot then
+				ok, out = pcall(calcFunc, { repSlotName = c.slot, repItem = nil }, false)
+			elseif c.node then
+				local n = build.spec.nodes[tonumber(c.node)]
+				if n then ok, out = pcall(calcFunc, { removeNodes = { [n] = true } }, false) end
+			elseif c.group and c.gem then
+				local g = build.skillsTab.socketGroupList[c.group]
+				local gem = g and g.gemList[c.gem]
+				if gem and gem.enabled ~= false then
+					gem.enabled = false build.skillsTab:ProcessSocketGroup(g)
+					ok, out = pcall(calcFunc, nil, false)
+					gem.enabled = true build.skillsTab:ProcessSocketGroup(g)
+				end
+			end
+			if ok and out then
+				local x = stats(out)
+				res[i] = { key = c.key, dpsPct = pctD(x, b), ehpPct = (b.TotalEHP or 0) ~= 0 and ((x.TotalEHP or 0) - b.TotalEHP) / b.TotalEHP * 100 or nil }
+			else
+				res[i] = { key = c.key }
+			end
+		end
+		build.buildFlag = true
+		H.recalc()
+		return { results = res }
+	end
+
 	local function findNodes(text, limit)
 		local want = (text or ""):lower()
 		local res = {}
@@ -408,6 +441,8 @@ return function(H)
 					return { nodes = findNodes(r.text, r.limit) }
 				elseif r.op == "uniques" then
 					return { uniques = uniques(r.slot) }
+				elseif r.op == "contrib" then
+					return contrib(r.parts)
 				elseif r.op == "supportOptions" then
 					return supportOptions(r.group, r.names)
 				elseif r.op == "gems" then

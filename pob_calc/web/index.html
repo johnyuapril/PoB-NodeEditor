@@ -49,6 +49,8 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card.off { opacity: .4; }
 .card.sel { outline: 3px solid #ff5a3d; outline-offset: 1px; }
 .card.dim { opacity: .28; }
+.cb { font-size: 10px; font-weight: 700; padding: 0 4px; border-radius: 6px; background: rgba(0,0,0,.35); white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; }
+.cb.dn { color: #ff8a7a; } .cb.up { color: #7ee08a; } .cb.eh.dn { color: #ffb36b; } .cb.eh.up { color: #7fc8ff; } .cb.z { color: #888; font-weight: 400; }
 .card.off.dim { opacity: .15; }
 .stl { font-size: 10px; color: #8fa3bf; padding: 0 12px; height: 18px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid rgba(255,255,255,.05); }
 .prow[data-stat] { cursor: pointer; } .prow.on { background: rgba(143,163,191,.18); }
@@ -56,7 +58,7 @@ button.primary { background: #24406b; border-color: #335a95; }
 .card .h.pillh { border-radius: 16px; padding: 0 12px; }
 .card .h .glyph { font-weight: 700; opacity: .9; }
 .card .h .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.card .h .tag { font-size: 10px; opacity: .75; white-space: nowrap; max-width: 70px; overflow: hidden; text-overflow: ellipsis; }
+.card .h .tag { font-size: 10px; opacity: .75; white-space: nowrap; max-width: 52px; overflow: hidden; text-overflow: ellipsis; }
 .card .h button { padding: 0 4px; font-size: 10px; background: rgba(0,0,0,.25); border-color: rgba(255,255,255,.15); color: #fff; }
 .ports { position: relative; padding-bottom: 4px; }
 .socks { padding-top: 3px; border-bottom: 1px solid rgba(255,255,255,.08); padding-bottom: 3px; }
@@ -376,11 +378,11 @@ const STYLE = {
   situation: { w: 210, head: 30, row: 22, hc: "linear-gradient(#a33434,#5e1b1b)", glyph: "◆" },
   global: { w: 250, head: 30, row: 22, hc: "linear-gradient(#5f6b7a,#2e3540)", glyph: "Σ" },
   skill: { w: 360, head: 30, row: 22, hc: "linear-gradient(#3b6fc0,#1d3b6a)", glyph: "ƒ" },
-  unique: { w: 230, head: 30, row: 22, hc: "linear-gradient(#c0732a,#6b3a10)", glyph: "★" },
-  rare: { w: 230, head: 30, row: 22, hc: "linear-gradient(#a8932a,#5f5414)", glyph: "◇" },
-  notable: { w: 230, head: 30, row: 22, hc: "linear-gradient(#22897c,#124a44)", glyph: "◉" },
-  keystone: { w: 230, head: 30, row: 22, hc: "linear-gradient(#3a7f9c,#173d4d)", glyph: "⬢" },
-  ascendancy: { w: 230, head: 30, row: 22, hc: "linear-gradient(#ad3a8a,#5a1a46)", glyph: "♛" },
+  unique: { w: 280, head: 30, row: 22, hc: "linear-gradient(#c0732a,#6b3a10)", glyph: "★" },
+  rare: { w: 280, head: 30, row: 22, hc: "linear-gradient(#a8932a,#5f5414)", glyph: "◇" },
+  notable: { w: 280, head: 30, row: 22, hc: "linear-gradient(#22897c,#124a44)", glyph: "◉" },
+  keystone: { w: 280, head: 30, row: 22, hc: "linear-gradient(#3a7f9c,#173d4d)", glyph: "⬢" },
+  ascendancy: { w: 280, head: 30, row: 22, hc: "linear-gradient(#ad3a8a,#5a1a46)", glyph: "♛" },
   support: { w: 200, head: 30, row: 20, pill: "linear-gradient(#5a47a8,#33286a)" },
   lineage: { w: 200, head: 30, row: 20, pill: "linear-gradient(#9c7a24,#5a4512)" },
 };
@@ -434,7 +436,7 @@ function layout(list) {
     cs.forEach((c) => { if (!def[c.key]) { def[c.key] = { x: 20, y: ly }; ly += cardH(c) + 10; } });
     y = Math.max(ly, ry) + 36;
   });
-  const colX = { 2: 560, 3: 860, 4: 1160, 5: 1460 }, colY = { 2: 20, 3: 20, 4: 20, 5: 20 };
+  const colX = { 2: 560, 3: 900, 4: 1240, 5: 1580 }, colY = { 2: 20, 3: 20, 4: 20, 5: 20 };
   list.forEach((c) => { if (def[c.key] || !colX[c.col]) return; def[c.key] = { x: colX[c.col], y: colY[c.col] }; colY[c.col] += cardH(c) + 18; });
   pos = {};
   list.forEach((c) => { pos[c.key] = dragged[c.key] || def[c.key] || { x: 20, y }; });
@@ -512,8 +514,8 @@ function render() {
     const sub = c.kind === "rare" || c.kind === "unique" ? T(c.slot) : "";
     const btns = c.virtual ? "" : `<button data-a="toggle" title="${c.off ? "켜기" : "끄기"}">${c.off ? "○" : "●"}</button><button data-a="remove" title="빼기">✕</button>`;
     const head = st.pill
-      ? `<div class="h pillh" style="height:${st.head}px"><span class="nm"${gemAttr(c.en)} title="${esc(c.name)}">${esc(c.name)}</span><span class="tag">${KNAME[c.kind]}</span>${btns}</div>`
-      : `<div class="h" style="height:${st.head}px;background:${st.hc}"><span class="glyph">${st.glyph}</span><span class="nm"${gemAttr(c.en)} title="${esc(c.name)} ${esc(sub)}">${esc(c.name)}</span><span class="tag">${esc(sub || KNAME[c.kind])}</span>${btns}</div>`;
+      ? `<div class="h pillh" style="height:${st.head}px"><span class="nm"${gemAttr(c.en)} title="${esc(c.name)}">${esc(c.name)}</span><span class="tag">${KNAME[c.kind]}</span>${cbadge(c)}${btns}</div>`
+      : `<div class="h" style="height:${st.head}px;background:${st.hc}"><span class="glyph">${st.glyph}</span><span class="nm"${gemAttr(c.en)} title="${esc(c.name)} ${esc(sub)}">${esc(c.name)}</span><span class="tag">${esc(sub || KNAME[c.kind])}</span>${cbadge(c)}${btns}</div>`;
     const ns = nSock(c);
     let sockHtml = "";
     if (ns) {
@@ -530,7 +532,7 @@ function render() {
           y0 += H; continue;
         }
         const gp = portsOf(g), gcol = g.kind === "lineage" ? "#e5c25a" : "#b9aaff";
-        let inner = `<span class="gc" style="height:${SROW}px"><span class="gn" data-gk="${esc(g.key)}"${gemAttr(g.en)} style="color:${gcol};line-height:${SROW}px">${esc(g.name)}</span><span class="gb"><button data-a="gtoggle" data-gk="${esc(g.key)}" title="${g.off ? "켜기" : "끄기"}">${g.off ? "○" : "●"}</button><button data-a="gremove" data-gk="${esc(g.key)}" title="빼기">✕</button></span></span>`;
+        let inner = `<span class="gc" style="height:${SROW}px"><span class="gn" data-gk="${esc(g.key)}"${gemAttr(g.en)} style="color:${gcol};line-height:${SROW}px">${esc(g.name)}</span>${cbadge(g)}<span class="gb"><button data-a="gtoggle" data-gk="${esc(g.key)}" title="${g.off ? "켜기" : "끄기"}">${g.off ? "○" : "●"}</button><button data-a="gremove" data-gk="${esc(g.key)}" title="빼기">✕</button></span></span>`;
         for (let r = 0; r < nr; r++) {
           const a = gp.ins[r], b = gp.outs[r], ty = r * SROW;
           if (a) inner += `<span class="pl" data-port="${a}" data-dir="in" style="top:${ty}px;line-height:${SROW}px;color:${PC(a)}" title="${esc(TL(g.ent.ev["in:" + a] || ""))}">${esc(PN(a))}</span>`;
@@ -647,6 +649,39 @@ function render() {
   renderPortList(ps);
   renderCycles(cyc, list);
   renderStats();
+  scheduleContrib(list);
+}
+// contribution: PoB takes each card out alone and measures; the badge shows what the build loses without it
+let CONTRIB = {}, contribKey = null, contribT = null;
+function scheduleContrib(list) {
+  if (!S) return;
+  const key = JSON.stringify(S.stats) + "|" + list.filter((c) => !c.off).map((c) => c.key).join(",");
+  if (key === contribKey) return;
+  contribKey = key;
+  clearTimeout(contribT);
+  contribT = setTimeout(async () => {
+    const parts = [];
+    list.forEach((c) => {
+      if (c.off || c.ghost || c.virtual) return;
+      if (c.gem) parts.push({ key: c.key, group: c.gem.group, gem: c.gem.idx });
+      else if (c.node) parts.push({ key: c.key, node: c.node.id });
+      else if (c.slot) parts.push({ key: c.key, slot: c.slot });
+    });
+    const r = await api({ op: "contrib", parts });
+    if (!r.ok || contribKey !== key) return;
+    CONTRIB = {};
+    (r.results || []).forEach((x) => { if (x && x.key) CONTRIB[x.key] = x; });
+    render();
+  }, 400);
+}
+function cbadge(c) {
+  const x = CONTRIB[c.key]; if (!x || c.off) return "";
+  const d = x.dpsPct, e = x.ehpPct, f = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(1)) + "%";
+  const t = `빼면 주 스킬 피해 ${d == null ? "?" : f(d)}, 유효 생명력 ${e == null ? "?" : f(e)}`;
+  let h = "";
+  if (d != null && Math.abs(d) >= 0.5) h += `<span class="cb ${d < 0 ? "dn" : "up"}" title="${t}">${f(d)}</span>`;
+  if (e != null && Math.abs(e) >= 1) h += `<span class="cb eh ${e < 0 ? "dn" : "up"}" title="${t}">♥${f(e)}</span>`;
+  return h;
 }
 
 // Tarjan SCC over cards: an edge a->b when a outputs a port that b takes as input (both on, port visible)
